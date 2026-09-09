@@ -13,7 +13,7 @@ only at the hard junctures.
 
 [Overview](#overview) · [Install](#installation) · [Quickstart](#quickstart) ·
 [Running SpecEvo](#running-specevo) · [Baselines](#baselines) · [Benchmarks](#benchmarks) ·
-[Reproducing](#reproducing-the-paper) · [Layout](#repository-layout) · [Tests](#tests)
+[Reproducing](#reproducing-the-paper)
 
 </div>
 
