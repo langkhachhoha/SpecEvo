@@ -9,7 +9,6 @@ only at the hard junctures.
 [![Python](https://img.shields.io/badge/python-3.10%20–%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Tasks](https://img.shields.io/badge/benchmark%20tasks-176-orange.svg)](#benchmarks)
-[![Tests](https://img.shields.io/badge/tests-607%20passing-brightgreen.svg)](#tests)
 
 [Overview](#overview) · [Install](#installation) · [Quickstart](#quickstart) ·
 [Running SpecEvo](#running-specevo) · [Baselines](#baselines) · [Benchmarks](#benchmarks) ·
