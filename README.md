@@ -591,12 +591,19 @@ SpecEvo/
 ### Running the tests
 
 ```bash
-pytest tests/                   # 607 tests, ~5 min, no API calls
+pytest tests/                   # 607 tests, ~5 min, no API calls (LLMs are mocked)
 pytest tests/specevo -q         # SpecEvo engine only
-pytest tests/ -m "not slow"     # skip the slow ones (some are timing-sensitive
-                                # and can fail on a heavily loaded machine)
+pytest tests/ -m "not slow"     # skip the slow ones
 python scripts/check_tasks.py   # all 176 tasks import and expose the contract
 ```
+
+> [!NOTE]
+> The `slow` tests in `tests/specevo/test_integration.py::TestFullRun` run a full
+> evolutionary loop against a mocked LLM and evaluate candidates in subprocesses
+> under a **5-second** timeout. On a loaded machine, or when that class is run on
+> its own from cold, the timeout can fire and the assertions fail — this is
+> environment sensitivity, not a broken build. Run the whole suite, or use
+> `-m "not slow"`, if you hit it.
 
 Two optional scripts do make live API calls:
 
