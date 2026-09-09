@@ -15,7 +15,7 @@ score through the same evaluator, so numbers are comparable across every method.
 ## Setup
 
 ```bash
-pip install -e ".[math,adrs]"                   # evaluator dependencies
+pip install -e ".[math,adrs,lsr]"               # evaluator dependencies
 bash scripts/download_benchmark_data.sh         # payloads not kept in git
 ```
 

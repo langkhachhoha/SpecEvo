@@ -28,6 +28,12 @@ fi
 
 if want lsr_synth; then
     echo "==> LSR-Synth data + per-problem task directories"
+    if ! "$PY" -c "import huggingface_hub, pyarrow" 2>/dev/null; then
+        echo "ERROR: LSR-Synth needs huggingface_hub and pyarrow to read the" >&2
+        echo "       published parquet splits. Install them with:" >&2
+        echo "           pip install -e \".[lsr]\"" >&2
+        exit 2
+    fi
     "$PY" benchmarks/llm_srbench/prepare_data.py
     "$PY" benchmarks/llm_srbench/generate_dirs.py
 fi

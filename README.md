@@ -74,7 +74,7 @@ cd SpecEvo
 
 uv venv --python 3.11
 uv pip install -e ".[dev]"
-uv pip install -e ".[math,adrs]"     # benchmark evaluator dependencies
+uv pip install -e ".[math,adrs,lsr]"  # benchmark evaluator dependencies
 ```
 
 </details>
@@ -88,7 +88,7 @@ cd SpecEvo
 
 python3.11 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -e ".[dev,math,adrs]"
+pip install -e ".[dev,math,adrs,lsr]"
 ```
 
 </details>
@@ -137,7 +137,7 @@ bash scripts/download_benchmark_data.sh llm_sql  # or just one: llm_sql | eplb |
 |:--|:--|:--|
 | `llm_sql` | 5 CSVs (~69 MB) from HuggingFace | ADRS / LLM-SQL |
 | `eplb` | `expert-load.json` MoE workload | ADRS / EPLB |
-| `lsr_synth` | LSR-Synth splits, then regenerates the 129 per-problem task directories | LSR-Synth |
+| `lsr_synth` | LSR-Synth splits from the Hub, then regenerates the 129 per-problem task directories (needs the `lsr` extra) | LSR-Synth |
 
 Some benchmarks need extra Python packages; install them per suite:
 

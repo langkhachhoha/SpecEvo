@@ -43,6 +43,15 @@ adrs = [
     "networkx>=3.2,<3.4",
     "torch",
 ]
+lsr = [
+    # benchmarks/llm_srbench/prepare_data.py fetches the LSR-Synth splits from
+    # the Hub and reads them out of parquet.
+    "huggingface_hub>=0.20",
+    "pyarrow>=14.0",
+    "numpy>=1.22.0",
+    "scipy>=1.11.0",
+    "sympy>=1.14.0",
+]
 external = [
     "openevolve",
     "gepa[full]",
