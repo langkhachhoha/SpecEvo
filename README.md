@@ -42,6 +42,9 @@ The Navigator's intervention mode is chosen by the scalar stagnation signal `s_t
 Expensive reasoning is therefore *deferred* until enough evidence has accumulated for one intervention
 to influence many subsequent low-cost evaluations.
 
+![SpecEvo workflow](fig1.png)
+![SpecEvo workflow](fig2.png)
+
 ---
 
 ## Installation
