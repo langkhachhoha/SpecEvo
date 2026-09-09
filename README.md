@@ -8,20 +8,20 @@
 the whole trajectory — failures included — into reusable guidance; a frontier **Navigator** is woken
 only at the hard junctures.
 
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10%20–%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tasks](https://img.shields.io/badge/benchmark%20tasks-176-orange.svg)](#-benchmarks)
-[![Tests](https://img.shields.io/badge/tests-607%20passing-brightgreen.svg)](#running-the-tests)
+[![Tasks](https://img.shields.io/badge/benchmark%20tasks-176-orange.svg)](#benchmarks)
+[![Tests](https://img.shields.io/badge/tests-607%20passing-brightgreen.svg)](#tests)
 
-[Overview](#-overview) · [Install](#-installation) · [Quickstart](#-quickstart) ·
-[Running SpecEvo](#-running-specevo) · [Baselines](#-baselines) · [Benchmarks](#-benchmarks) ·
-[Reproducing](#-reproducing-the-paper) · [Layout](#-repository-layout)
+[Overview](#overview) · [Install](#installation) · [Quickstart](#quickstart) ·
+[Running SpecEvo](#running-specevo) · [Baselines](#baselines) · [Benchmarks](#benchmarks) ·
+[Reproducing](#reproducing-the-paper) · [Layout](#repository-layout) · [Tests](#tests)
 
 </div>
 
 ---
 
-## 📖 Overview
+## Overview
 
 LLM-driven evolutionary search is powerful but costly: most frameworks ask a single frontier model to
 carry *every* step — routine edits, invalid-program repair, and major strategic changes alike. SpecEvo
@@ -30,9 +30,9 @@ search state rather than fixing it in advance.
 
 | Role | Plays | Cadence | Model | What it does |
 |:--|:--|:--|:--|:--|
-| 🔬 **Speculator** | junior researchers | continuous, `W=4` in parallel | lightweight | Draws a parent from the behavioral archive under a stagnation-adaptive Zipf distribution, applies one of six variation prompts, executes the candidate. Handles ~97% of all calls. |
-| 📋 **Advisor** | senior labmate | every `Δ_A` evaluations | lightweight | Reads the whole trajectory — working niches, saturated niches, recurring execution failures — and rewrites a ≤300-word guidance note. Injected into each Speculator prompt with probability `ρ_A`. |
-| 🧭 **Navigator** | principal investigator | every `Δ_N` evaluations | frontier | Sees a two-resolution view of the archive and makes one strategic intervention, escalating with the stagnation signal. |
+| **Speculator** | junior researchers | continuous, `W=4` in parallel | lightweight | Draws a parent from the behavioral archive under a stagnation-adaptive Zipf distribution, applies one of six variation prompts, executes the candidate. Handles the large majority of all calls. |
+| **Advisor** | senior labmate | every `Δ_A` evaluations | lightweight | Reads the whole trajectory — working niches, saturated niches, recurring execution failures — and rewrites a short guidance note. Injected into each Speculator prompt with probability `ρ_A`. |
+| **Navigator** | principal investigator | every `Δ_N` evaluations | frontier | Sees a two-resolution view of the archive and makes one strategic intervention, escalating with the stagnation signal. |
 
 The Navigator's intervention mode is chosen by the scalar stagnation signal `s_t`:
 
@@ -54,14 +54,14 @@ to influence many subsequent low-cost evaluations.
 
 ---
 
-## 🚀 Installation
+## Installation
 
-### Requirements
+### Prerequisites
 
-- Python **3.11** or **3.12**
-- An [OpenRouter](https://openrouter.ai/) API key — every model in the paper (GPT-5, Kimi-K2, the Qwen3
-  family) is reached through one endpoint
-- ~92 MB for the repo, plus ~110 MB of benchmark data fetched at setup
+- Python **3.10 – 3.13** (the checked-in environment uses 3.11)
+- An [OpenRouter](https://openrouter.ai/) API key — every model in the paper (GPT-5, Kimi-K2, the
+  Qwen3 family) is reached through one endpoint
+- ~110 MB of benchmark data fetched at setup time
 
 ### 1. Get the code and an environment
 
@@ -69,12 +69,12 @@ to influence many subsequent low-cost evaluations.
 <summary><b>With <code>uv</code> (recommended)</b></summary>
 
 ```bash
-git clone <your-new-repo-url> SpecEvo
+git clone <repository-url> SpecEvo
 cd SpecEvo
 
 uv venv --python 3.11
 uv pip install -e ".[dev]"
-uv pip install -e ".[math,adrs,lsr]"  # benchmark evaluator dependencies
+uv pip install -e ".[math,adrs,lsr]"   # benchmark evaluator dependencies
 ```
 
 </details>
@@ -83,24 +83,39 @@ uv pip install -e ".[math,adrs,lsr]"  # benchmark evaluator dependencies
 <summary><b>With <code>pip</code> / <code>venv</code></b></summary>
 
 ```bash
-git clone <your-new-repo-url> SpecEvo
+git clone <repository-url> SpecEvo
 cd SpecEvo
 
 python3.11 -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
 pip install -e ".[dev,math,adrs,lsr]"
 ```
 
 </details>
 
+| Extra | Pulls in | Needed for |
+|:--|:--|:--|
+| `dev` | pytest, pytest-asyncio, black, isort, mypy | running the test suite |
+| `math` | jax, optax, torch, sympy, cvxpy, pymoo, … | the mathematical-discovery evaluators |
+| `adrs` | pandas, torch, pinned networkx | the ADRS systems evaluators |
+| `lsr` | huggingface_hub, pyarrow, sympy | fetching and scoring LSR-Synth |
+| `external` | openevolve, gepa (from git) | the OpenEvolve / GEPA baselines |
+| `prompt-optimization` | dspy, litellm, bm25s | the optional prompt-optimization path |
+
+> [!NOTE]
+> `specevo_baselines` is the installed package; the `specevo` package is used through the
+> drivers in [`scripts/`](scripts/), which add the repository root to `sys.path` themselves.
+> Run the commands below from a clone rather than expecting `import specevo` to resolve
+> from an arbitrary directory.
+
 ### 2. Set your API key
 
 ```bash
 cp .env.example .env
-$EDITOR .env                          # set OPENAI_API_KEY=sk-or-v1-...
+$EDITOR .env                           # set OPENAI_API_KEY=sk-or-v1-...
 ```
 
-Both runners load `.env` from the repo root automatically. An OpenRouter key placed in
+Both runners load `.env` from the repository root automatically. An OpenRouter key placed in
 `OPENAI_API_KEY` is mirrored into `OPENROUTER_API_KEY` for you.
 
 Verify it works before spending anything:
@@ -126,48 +141,52 @@ OK — model='openai/gpt-4o-mini', reply='OK'
 
 ### 3. Fetch the benchmark data
 
-The large CSV/JSON payloads are not committed. One command fetches all of them:
+The large CSV/JSON/parquet payloads are not committed. One command fetches all of them:
 
 ```bash
-bash scripts/download_benchmark_data.sh          # all suites (~110 MB)
-bash scripts/download_benchmark_data.sh llm_sql  # or just one: llm_sql | eplb | lsr_synth
+bash scripts/download_benchmark_data.sh           # all suites (~110 MB)
+bash scripts/download_benchmark_data.sh llm_sql   # or just one: llm_sql | eplb | lsr_synth
 ```
 
 | Suite | What it fetches | Needed for |
 |:--|:--|:--|
-| `llm_sql` | 5 CSVs (~69 MB) from HuggingFace | ADRS / LLM-SQL |
+| `llm_sql` | 5 CSVs (~69 MB) | ADRS / LLM-SQL |
 | `eplb` | `expert-load.json` MoE workload | ADRS / EPLB |
 | `lsr_synth` | LSR-Synth splits from the Hub, then regenerates the 129 per-problem task directories (needs the `lsr` extra) | LSR-Synth |
 
-Some benchmarks need extra Python packages; install them per suite:
+Some benchmark evaluators ship their own `requirements.txt`. Install them per benchmark directory:
 
 ```bash
-python scripts/install_benchmark_requirements.py
+python scripts/install_benchmark_requirements.py benchmarks/math/circle_packing
+python scripts/install_benchmark_requirements.py benchmarks/math/circle_packing --dry-run   # preview
 ```
 
 ### 4. Verify the checkout
 
-Import-checks all 176 tasks and makes no API calls — the fastest way to confirm
-setup is complete:
+Import-checks all 176 tasks and makes no API calls — the fastest way to confirm setup is complete:
 
 ```bash
 python scripts/check_tasks.py
 ```
 
 ```
-  Mathematical discovery             7 /   7
+Checking 176 tasks across 4 suite(s)
+
   Systems optimization (ADRS)        4 /   4
   CO-Bench                          36 /  36
   LSR-Synth                        129 / 129
+  Mathematical discovery             7 /   7
 
   TOTAL                            176 / 176
+
+All tasks load correctly.
 ```
 
 ---
 
-## ⚡ Quickstart
+## Quickstart
 
-A ~$0.01, few-minute run on a toy task, using a cheap model in **both** roles:
+A few-minute run on a toy task, using a cheap model in **both** roles:
 
 ```bash
 python scripts/run_specevo.py \
@@ -206,17 +225,22 @@ Then run something real:
 python scripts/run_specevo.py --task-dir tasks/circle_packing --evals 500 --dollars 10
 ```
 
+> [!WARNING]
+> Every command from here down spends real API credit. Always pass `--dollars` (SpecEvo / LEVI /
+> baselines) as a hard stop while you are finding your footing.
+
 ---
 
-## 🔧 Running SpecEvo
+## Running SpecEvo
 
 ```bash
 python scripts/run_specevo.py --task-dir <task> [options]
 ```
 
-A task directory is any folder exporting `PROBLEM_DESCRIPTION`, `FUNCTION_SIGNATURE` and `score_fn`
-from `problem.py` (optionally `SEED_PROGRAM` / `INPUTS`). All 176 benchmark tasks under
-[`tasks/`](tasks/) follow this contract, and your own problems plug in unchanged.
+A task directory is any folder whose `problem.py` exports `PROBLEM_DESCRIPTION`,
+`FUNCTION_SIGNATURE` and `score_fn` (optionally `SEED_PROGRAM` / `INPUTS`). All 176 benchmark tasks
+under [`tasks/`](tasks/) follow this contract — see [`tasks/README.md`](tasks/README.md) — and your
+own problems plug in unchanged. Use `--problem-module` if your module is not named `problem`.
 
 ### Models
 
@@ -238,6 +262,8 @@ The Advisor `M_A` runs on the Speculator model. Swap the backbone family with, e
 | `--seconds N` | Wall-clock budget (the paper's 3-hour setting = `10800`) |
 | `--target-score X` | Stop early once a candidate reaches `X` |
 | `--post-init-evals N` | Budget counted from the *end* of initialization, so the ~105 bootstrap evaluations do not eat into it |
+
+All four are unset by default.
 
 ### Concurrency
 
@@ -269,6 +295,7 @@ The Advisor `M_A` runs on the Speculator model. Swap the backbone family with, e
 | `--navigator-surgical-max-stagnation` | `0.7` | `γ₂` — surgical/reframe boundary |
 | `--navigator-synthesis-n-anchors` | `3` | Anchors in Synthesis mode |
 | `--navigator-reframe-n-anchors` | `2` | Anchors in Reframe mode |
+| `--navigator-surgical-n-inspirations` | `5` | Inspirations in Surgical mode |
 | `--navigator-force-mode` | adaptive | Pin one of `synthesis` / `surgical` / `reframe` (ablation) |
 
 ### Advisor
@@ -280,26 +307,36 @@ The Advisor `M_A` runs on the Speculator model. Swap the backbone family with, e
 | `--advisor-mode` | `rich` | `rich` uses success + saturation + error signals; `errors_only` is the ablation |
 | `--no-advisor` | off | Disable the Advisor entirely |
 
+### Parent analysis and crossover
+
+| Flag | Default | Meaning |
+|:--|:--|:--|
+| `--analyzer-interval` | `30` | Refresh cached parent analyses every N evaluations |
+| `--analyzer-top-k` | `3` | Top-ranked programs analysed per refresh |
+| `--p-targeted-mutate` | `0.5` | Probability of the targeted-mutate prompt when an analysis is cached |
+| `--p-crossover` | `0.35` | Crossover probability |
+
 ### Ablation switches
 
 | Flag | Removes |
 |:--|:--|
-| `--ast-only` | The description-embedding half of the archive descriptor |
-| `--emb-only` | The AST-features half of the archive descriptor |
-| `--static-cells` | Periodic re-clustering (k-means fit once, then frozen) |
-| `--single-prompt-operators` | The six specialized variation prompts (collapse to one per operator) |
-| `--no-crossover` | Crossover (`p_crossover = 0`) |
+| `--ast-only` | The description-embedding half of the archive descriptor (A2) |
+| `--emb-only` | The AST-features half of the archive descriptor (A1) |
+| `--static-cells` | Periodic re-clustering (k-means fit once, then frozen) (A3) |
+| `--single-prompt-operators` | The six specialized variation prompts (collapse to one per operator) (A6) |
+| `--no-crossover` | Crossover (sets `p_crossover = 0`) |
 | `--no-targeted-mutate` | The LLM parent-analysis pipeline |
 | `--no-advisor` | Consolidation into persistent guidance |
-| `--navigator-force-mode M` | Adaptive mode routing |
+| `--navigator-force-mode M` | Adaptive mode routing (A8) |
 
 ### Instrumentation
 
 | Flag | Writes |
 |:--|:--|
 | `--save-eval-code` | `eval_code_log.jsonl` — the source of **every** candidate, including those that failed to parse, raised, scored invalid or timed out |
-| `--error-rate-interval N` | `error_rate_report.json` — execution-error rate per N-evaluation window |
-| `--checkpoint-population` | `checkpoints/checkpoint_NN.json` — the full population at each window close |
+| `--error-rate-interval N` | Execution-error rate per N-evaluation window |
+| `--checkpoint-population` | `checkpoints/checkpoint_<NN>.json` — the full population at each window close (needs `--error-rate-interval`) |
+| `--align-advisor-post-init` | Restart the Advisor clock at the end of init, so Advisor cycle *k* and error-rate window *k* share an origin |
 
 ### Run outputs
 
@@ -316,10 +353,11 @@ eval_code_log.jsonl    every candidate, with --save-eval-code
 
 ---
 
-## 📊 Baselines
+## Baselines
 
 Every baseline runs on the same task specification, evaluator, budget accounting and prompt scaffold —
-only the search logic differs.
+only the search logic differs. See [`specevo_baselines/README.md`](specevo_baselines/README.md) for the
+shared engine.
 
 ### Heterogeneous-model methods
 
@@ -333,18 +371,21 @@ python scripts/run_relay.py --method relayevolve \
     --iterations 500 --dollars 10 --workers 8 --seed 1
 ```
 
+`run_levi.py` names its models `--small-model` / `--large-model` rather than by paper role.
+
 ### Controlled model-allocation strategies
 
 These isolate the effect of *coordination* from the mere availability of two differently priced models.
-They share one asynchronous evolutionary backend and differ only in which model gets each call:
+They share one evolutionary backend and differ only in which model gets each call:
 
 | `--method` | Allocation rule |
 |:--|:--|
+| `relayevolve` | Cheap multi-trajectory exploration → Relay-Gain handoff → strong refinement |
 | `all_cheap` | Every call to the lightweight model |
 | `all_strong` | Every call to the frontier model |
-| `fixed_switch` | Lightweight for the first `B/2` calls, then a one-time switch |
-| `random` | Independent coin flip per call |
-| `bandit` | UCB1 over the two models, rewarded by global-best improvement |
+| `fixed_switch` | Lightweight prefix, then a one-time switch (`--switch-fraction`) |
+| `random` | Independent coin flip per generation (`--p-strong`) |
+| `bandit` | Two-armed UCB on realized best-so-far improvement |
 
 ```bash
 python scripts/run_relay.py --method bandit \
@@ -353,6 +394,9 @@ python scripts/run_relay.py --method bandit \
     --strong-model openrouter/openai/gpt-5 \
     --iterations 500 --dollars 10
 ```
+
+Defaults are `--cheap-model openrouter/qwen/qwen3-30b-a3b-instruct-2507`,
+`--strong-model openrouter/moonshotai/kimi-k2`, `--iterations 300`, `--dollars 2`, `--workers 8`.
 
 ### Single-backbone evolutionary frameworks
 
@@ -372,17 +416,21 @@ python -m specevo_baselines.cli \
 | `adaevolve` | **AdaEvolve** — bandit-scheduled islands, meta-level tactics under stagnation |
 | `evox` | **EvoX** — co-evolves the candidate program and the search strategy |
 
+Also available: `best_of_n`, `beam_search`, `topk`, `relay*`, and the `openevolve` / `gepa` /
+`shinkaevolve` wrappers around the upstream libraries (install the `external` extra).
+
 Shared flags: `-i/--iterations`, `--dollars`, `-m/--model`, `-c/--config`, `-o/--output`,
-`--checkpoint` (resume), `-l/--log-level`. Starter configs live in [`configs/`](configs/).
+`--checkpoint` (resume), `-l/--log-level`, `--api-base`, `--agentic`. Starter configs live in
+[`configs/`](configs/) — see [`configs/README.md`](configs/README.md).
 
 ---
 
-## 🧪 Benchmarks
+## Benchmarks
 
 **176 tasks across four suites.** Each task appears twice: as a `problem.py` adapter under
-[`tasks/`](tasks/) (used by SpecEvo and LEVI) and as an `initial_program.py` + `evaluator.py` +
+[`tasks/`](tasks/) (used by SpecEvo and LEVI) and as an `initial_program.py` + evaluator +
 `config.yaml` triple under [`benchmarks/`](benchmarks/) (used by the baselines framework). Both score
-through the same evaluator.
+through the same evaluator, so numbers are comparable across every method.
 
 | Suite | Tasks | Directory | Objective |
 |:--|--:|:--|:--|
@@ -398,9 +446,9 @@ through the same evaluator.
 |:--|:--|:--|
 | `circle_packing` | `N = 26` | Pack disjoint circles in a unit square, maximize sum of radii |
 | `circle_packing_rect` | `N = 21` | Same, in a rectangle of perimeter 4 |
-| `heilbronn_triangle` | `N = 11` | Maximize the minimum triangle area over points in a unit-area triangle |
+| `heilbronn_triangle` | `N = 11` | Maximize the minimum triangle area over points in a unit triangle |
 | `heilbronn_convex_13` | `N = 13` | Same, over a convex region |
-| `minmax_distance_2` | `(N, d) = (16, 2)` | Maximize the min/max pairwise-distance ratio |
+| `minmax_distance_2` | `(N, d) = (16, 2)` | Maximize `(d_min / d_max)²` over pairwise distances |
 | `minmax_distance_3` | `(N, d) = (14, 3)` | Same, in three dimensions |
 | `signal_processing` | — | Continuous signal-processing objective under noisy evaluation |
 
@@ -447,20 +495,22 @@ through the same evaluator.
 Regenerate the per-problem directories after fetching the data:
 
 ```bash
-python benchmarks/llm_srbench/generate_dirs.py                 # all
+python benchmarks/llm_srbench/generate_dirs.py                  # all
 python benchmarks/llm_srbench/generate_dirs.py --domain matsci --limit 5
 ```
+
+`generate_dirs.py` also accepts `--problem PID`, `--iterations N` and `--model MODEL`.
 
 </details>
 
 > [!IMPORTANT]
-> The paper reports **175** tasks with 43 physics problems; the shipped LSR-Synth split contains **44**,
-> giving 176 here. The extra problem is included rather than silently dropped — pass `--limit` to
-> `generate_dirs.py` if you need an exact subset.
+> The paper reports **175** tasks with 43 physics problems; the shipped LSR-Synth split contains
+> **44**, giving 176 here. The extra problem is included rather than silently dropped — pass
+> `--limit` to `generate_dirs.py` if you need an exact subset.
 
 ---
 
-## 🔁 Reproducing the paper
+## Reproducing the paper
 
 One script per suite, in [`scripts/reproduce/`](scripts/reproduce/):
 
@@ -471,20 +521,29 @@ bash scripts/reproduce/co_bench.sh      #  36 tasks
 bash scripts/reproduce/lsr_synth.sh     # 129 tasks
 ```
 
-All four take the same environment overrides:
+All four read the same environment overrides (defaults shown):
+
+| Variable | Default | Meaning |
+|:--|:--|:--|
+| `METHOD` | `specevo` | `specevo`, `levi`, or any baseline search key |
+| `SPECULATOR_MODEL` | `openrouter/qwen/qwen3-30b-a3b-instruct-2507` | lightweight model (LEVI's `--small-model`) |
+| `NAVIGATOR_MODEL` | `openrouter/openai/gpt-5` | frontier model (also the baselines' `-m`) |
+| `EVALS` | `500` | evaluation cap |
+| `DOLLARS` | `10` | USD cap |
+| `SECONDS_CAP` | `10800` | wall-clock cap |
+| `WORKERS` | `4` | parallel workers |
+| `SEED` | `1` | run seed (used in the output path) |
+| `OUT` | `outputs/repro` | output root: `$OUT/$METHOD/<task>/seed$SEED` |
 
 ```bash
-METHOD=specevo \
-SPECULATOR_MODEL=openrouter/qwen/qwen3-30b-a3b-instruct-2507 \
-NAVIGATOR_MODEL=openrouter/openai/gpt-5 \
-EVALS=500 DOLLARS=10 SECONDS_CAP=10800 WORKERS=4 SEED=1 \
+METHOD=specevo EVALS=500 DOLLARS=10 SECONDS_CAP=10800 SEED=1 \
 OUT=outputs/repro \
 bash scripts/reproduce/math.sh
 ```
 
-`METHOD` accepts `specevo`, `levi`, or any baseline search key
-(`openevolve_native`, `gepa_native`, `adaevolve`, `evox`, `relayevolve`, …); the script dispatches to
-the right runner automatically. To sweep a table row, loop over methods and seeds:
+The scripts dispatch to `run_specevo.py` for `METHOD=specevo`, `run_levi.py` for `METHOD=levi`, and
+`python -m specevo_baselines.cli -s $METHOD` for everything else. To sweep a table row, loop over
+methods and seeds:
 
 ```bash
 for m in specevo levi relayevolve openevolve_native gepa_native adaevolve evox; do
@@ -492,20 +551,28 @@ for m in specevo levi relayevolve openevolve_native gepa_native adaevolve evox; 
 done
 ```
 
+> [!WARNING]
+> These scripts spend real API credit across every task in a suite — `lsr_synth.sh` alone covers 129
+> problems. Read them before launching, and start with a small `DOLLARS` value.
+
 ### The three budget regimes
 
 | Regime | Setting | Paper |
 |:--|:--|:--|
-| Wall-clock | `SECONDS_CAP=10800` | 3-hour budget (Figure 3) |
-| API cost | `DOLLARS=10` | \$10 budget (Figure 6) |
-| Evaluations | `EVALS=500` | 500-call budget (Table 1) |
+| Wall-clock | `SECONDS_CAP=10800` | 3-hour budget |
+| API cost | `DOLLARS=10` | \$10 budget |
+| Evaluations | `EVALS=500` | 500-call budget |
 
 ### Aggregating LSR-Synth results
 
 ```bash
-python scripts/lsr_summarize.py outputs/repro/specevo      # NMSE per domain/split
-python scripts/lsr_symbolic_accuracy.py outputs/repro/specevo
+python scripts/lsr_summarize.py outputs/repro/specevo          # NMSE / Acc0.1 per domain, ID & OOD
+python scripts/lsr_symbolic_accuracy.py outputs/repro/specevo  # LLM equivalence judge (spends credit)
 ```
+
+`lsr_summarize.py` reads every `results.jsonl` under the paths given and takes `--csv` / `--json` to
+export. Individual problems are finalized by `scripts/lsr_finalize.py`, which re-evaluates the program
+left on disk rather than trusting the search's own metric dict.
 
 > [!WARNING]
 > **Hardware sensitivity.** Wall-clock results depend on the parallelism available to the Speculator
@@ -515,7 +582,7 @@ python scripts/lsr_symbolic_accuracy.py outputs/repro/specevo
 <details>
 <summary><b>Default hyperparameters vs. the paper's appendix</b> — read before reproducing</summary>
 
-Most defaults match Appendix E exactly:
+Most defaults match the appendix exactly:
 
 | Parameter | Code default | Paper |
 |:--|--:|--:|
@@ -546,12 +613,12 @@ left as-published rather than silently changed — set the flags above if you wa
 
 ---
 
-## 📁 Repository layout
+## Repository layout
 
 ```
 SpecEvo/
 ├── specevo/                    SpecEvo implementation + the LEVI baseline
-│   ├── engine/                 ⭐ the SpecEvo engine
+│   ├── engine/                 the SpecEvo engine
 │   │   ├── orchestrator.py       async speculate-then-consolidate loop,
 │   │   │                         Navigator routing, Advisor cycle, budgets
 │   │   ├── prompts.py            all prompt templates (verbatim, see note above)
@@ -568,64 +635,73 @@ SpecEvo/
 ├── specevo_baselines/          OpenEvolve / GEPA / AdaEvolve / EvoX / RelayEvolve
 │   ├── search/                 one package per search method
 │   ├── evaluation/             sandboxed evaluator execution
+│   ├── context_builder/        per-method prompt templates
 │   └── cli.py                  the baselines command line
 │
 ├── tasks/                      176 task adapters (problem.py) for SpecEvo & LEVI
-├── benchmarks/                 the same 176 tasks as evaluator + config for baselines
+├── benchmarks/                 the same 176 tasks as initial_program + evaluator + config
 ├── configs/                    starter YAML configs per baseline
 ├── scripts/
-│   ├── run_specevo.py          ⭐ SpecEvo runner
+│   ├── run_specevo.py          SpecEvo runner
 │   ├── run_levi.py             LEVI baseline runner
-│   ├── run_relay.py            RelayEvolve + the 4 allocation controls
+│   ├── run_relay.py            RelayEvolve + the 5 allocation controls
 │   ├── reproduce/              one script per benchmark suite
 │   ├── download_benchmark_data.sh
 │   ├── check_tasks.py          import-check all 176 tasks (no API calls)
 │   ├── test_openrouter_key.py  verify the API key
-│   └── lsr_*.py                LSR-Synth result aggregation
+│   └── lsr_*.py                LSR-Synth finalization and aggregation
 │
-├── best_programs/              highest-scoring programs per method (paper appendix)
 ├── tests/                      607 tests (specevo/ and baselines)
 └── paper.pdf                   the paper this repository implements
 ```
 
-### Running the tests
+---
+
+## Tests
 
 ```bash
-pytest tests/                   # 607 tests, ~5 min, no API calls (LLMs are mocked)
+pytest tests/                   # 607 tests, no API calls (LLMs are mocked)
 pytest tests/specevo -q         # SpecEvo engine only
 pytest tests/ -m "not slow"     # skip the slow ones
 python scripts/check_tasks.py   # all 176 tasks import and expose the contract
 ```
 
+Registered markers: `slow`, `integration`, `asyncio`.
+
 > [!NOTE]
-> The `slow` tests in `tests/specevo/test_integration.py::TestFullRun` run a full
-> evolutionary loop against a mocked LLM and evaluate candidates in subprocesses
-> under a **5-second** timeout. On a loaded machine, or when that class is run on
-> its own from cold, the timeout can fire and the assertions fail — this is
-> environment sensitivity, not a broken build. Run the whole suite, or use
+> The `slow` tests in `tests/specevo/test_integration.py::TestFullRun` run a full evolutionary loop
+> against a mocked LLM and evaluate candidates in subprocesses under a **5-second** timeout. On a
+> loaded machine, or when that class is run on its own from cold, the timeout can fire and the
+> assertions fail — this is environment sensitivity, not a broken build. Run the whole suite, or use
 > `-m "not slow"`, if you hit it.
 
-Two optional scripts do make live API calls:
+A few helpers *do* make live API calls. None of them are named `test_*.py`, so pytest never collects
+them — run them by hand when you want to audit model behaviour (each costs a few cents):
 
-```bash
-python scripts/smoke_specevo_prompts.py            # render every prompt template
-python tests/specevo/engine/format_compliance_live.py   # check model output-format compliance
-```
+| Script | Checks |
+|:--|:--|
+| `scripts/smoke_specevo_prompts.py` | Every variation prompt renders and the model returns a parseable description + code |
+| `tests/specevo/engine/format_compliance_live.py` | Output-format compliance on the prompts the orchestrator actually emits |
+| `tests/specevo/simple/format_compliance.py` | Format compliance across a (paradigm hint × temperature) matrix |
+| `tests/specevo/simple/live_smoke.py` | Description-embedding path end to end |
 
 ---
 
-## 📄 Citation
+## Citation
+
+The accompanying paper is under double-blind review at ICLR 2027, so the entry is anonymous:
 
 ```bibtex
 @inproceedings{specevo,
   title     = {SpecEvo: Speculative Evolution with Large Language Models
                for Cost-Efficient Scientific Discovery},
   booktitle = {International Conference on Learning Representations (ICLR)},
-  year      = {2027}
+  year      = {2027},
+  note      = {Under review}
 }
 ```
 
-## 📜 License
+## License
 
 [Apache-2.0](LICENSE). Benchmark data retains the license of its original source; see the README in
 each benchmark directory.
