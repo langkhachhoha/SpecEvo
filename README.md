@@ -83,6 +83,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate
 pip install -e ".[dev,math,adrs,lsr]"
 ```
+</details>
 
 ### 2. Set your API key
 
