@@ -4895,142 +4895,6 @@ wheels = [
 ]
 
 [[package]]
-name = "skydiscover"
-source = { editable = "." }
-dependencies = [
-    { name = "networkx" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "openai" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "tqdm" },
-]
-
-[package.optional-dependencies]
-adrs = [
-    { name = "networkx" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "torch" },
-]
-dev = [
-    { name = "black" },
-    { name = "isort" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "requests" },
-]
-external = [
-    { name = "gepa" },
-    { name = "litellm" },
-    { name = "openevolve" },
-]
-frontier-cs = [
-    { name = "anthropic" },
-    { name = "colorlog" },
-    { name = "datasets" },
-    { name = "google-genai" },
-    { name = "google-generativeai" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "python-dotenv" },
-    { name = "skypilot" },
-]
-math = [
-    { name = "autograd" },
-    { name = "cvxpy", version = "1.7.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "cvxpy", version = "1.8.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "jax", version = "0.6.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "jax", version = "0.9.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "matplotlib" },
-    { name = "networkx" },
-    { name = "numba" },
-    { name = "optax" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "plotly" },
-    { name = "pymoo" },
-    { name = "pywavelets", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pywavelets", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "sympy" },
-    { name = "torch" },
-]
-prompt-optimization = [
-    { name = "bm25s" },
-    { name = "datasets" },
-    { name = "diskcache" },
-    { name = "dspy" },
-    { name = "litellm" },
-    { name = "pystemmer" },
-    { name = "ujson" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'frontier-cs'", specifier = ">=0.74.0" },
-    { name = "autograd", marker = "extra == 'math'" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=22.0.0" },
-    { name = "bm25s", marker = "extra == 'prompt-optimization'", specifier = ">=0.3.0" },
-    { name = "colorlog", marker = "extra == 'frontier-cs'", specifier = ">=6.10.1" },
-    { name = "cvxpy", marker = "extra == 'math'" },
-    { name = "datasets", marker = "extra == 'frontier-cs'", specifier = ">=4.4.1" },
-    { name = "datasets", marker = "extra == 'prompt-optimization'", specifier = ">=4.5.0" },
-    { name = "diskcache", marker = "extra == 'prompt-optimization'", specifier = ">=5.6.3" },
-    { name = "dspy", marker = "extra == 'prompt-optimization'", specifier = ">=3.1.3" },
-    { name = "gepa", extras = ["full"], marker = "extra == 'external'", git = "https://github.com/gepa-ai/gepa.git?branch=main" },
-    { name = "google-genai", marker = "extra == 'frontier-cs'", specifier = ">=1.55.0" },
-    { name = "google-generativeai", marker = "extra == 'frontier-cs'", specifier = ">=0.8.5" },
-    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.10.0" },
-    { name = "jax", marker = "extra == 'math'", specifier = ">=0.6.2" },
-    { name = "litellm", marker = "extra == 'external'", specifier = ">=1.81" },
-    { name = "litellm", marker = "extra == 'prompt-optimization'", specifier = ">=1.81" },
-    { name = "matplotlib", marker = "extra == 'math'" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=0.950" },
-    { name = "networkx", specifier = ">=3.2" },
-    { name = "networkx", marker = "extra == 'adrs'", specifier = ">=3.2,<3.4" },
-    { name = "networkx", marker = "extra == 'math'" },
-    { name = "numba", marker = "extra == 'math'" },
-    { name = "numpy", specifier = ">=1.22.0" },
-    { name = "numpy", marker = "extra == 'adrs'", specifier = ">=1.22.0" },
-    { name = "numpy", marker = "extra == 'frontier-cs'", specifier = ">=2.0.0" },
-    { name = "openai", specifier = ">=1.0.0" },
-    { name = "openevolve", marker = "extra == 'external'", git = "https://github.com/algorithmicsuperintelligence/openevolve.git?branch=main" },
-    { name = "optax", marker = "extra == 'math'", specifier = ">=0.2.6" },
-    { name = "pandas", marker = "extra == 'adrs'" },
-    { name = "pandas", marker = "extra == 'math'" },
-    { name = "plotly", marker = "extra == 'math'" },
-    { name = "pymoo", marker = "extra == 'math'" },
-    { name = "pystemmer", marker = "extra == 'prompt-optimization'", specifier = ">=2.2.0.3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
-    { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "python-dotenv", marker = "extra == 'frontier-cs'", specifier = ">=1.2.1" },
-    { name = "pywavelets", marker = "extra == 'math'" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "requests", marker = "extra == 'dev'", specifier = ">=2.28.0" },
-    { name = "scikit-learn", marker = "extra == 'math'", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.11.0" },
-    { name = "scipy", marker = "extra == 'math'", specifier = ">=1.11.0" },
-    { name = "skypilot", marker = "extra == 'frontier-cs'", specifier = ">=0.10.5" },
-    { name = "sympy", marker = "extra == 'math'", specifier = ">=1.14.0" },
-    { name = "torch", marker = "extra == 'adrs'" },
-    { name = "torch", marker = "extra == 'math'" },
-    { name = "tqdm", specifier = ">=4.64.0" },
-    { name = "ujson", marker = "extra == 'prompt-optimization'", specifier = ">=5.11.0" },
-]
-provides-extras = ["math", "adrs", "external", "dev", "frontier-cs", "prompt-optimization"]
-
-[[package]]
 name = "skypilot"
 version = "0.11.1"
 source = { registry = "https://pypi.org/simple" }
@@ -5106,6 +4970,156 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e0
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235, upload-time = "2024-02-25T23:20:01.196Z" },
 ]
+
+[[package]]
+name = "specevo-baselines"
+source = { editable = "." }
+dependencies = [
+    { name = "networkx" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "openai" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "tqdm" },
+]
+
+[package.optional-dependencies]
+adrs = [
+    { name = "networkx" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "torch" },
+]
+dev = [
+    { name = "black" },
+    { name = "isort" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "requests" },
+]
+external = [
+    { name = "gepa" },
+    { name = "litellm" },
+    { name = "openevolve" },
+]
+frontier-cs = [
+    { name = "anthropic" },
+    { name = "colorlog" },
+    { name = "datasets" },
+    { name = "google-genai" },
+    { name = "google-generativeai" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "python-dotenv" },
+    { name = "skypilot" },
+]
+lsr = [
+    { name = "huggingface-hub" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pyarrow" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "sympy" },
+]
+math = [
+    { name = "autograd" },
+    { name = "cvxpy", version = "1.7.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "cvxpy", version = "1.8.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "jax", version = "0.6.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "jax", version = "0.9.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "matplotlib" },
+    { name = "networkx" },
+    { name = "numba" },
+    { name = "optax" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "plotly" },
+    { name = "pymoo" },
+    { name = "pywavelets", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pywavelets", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "sympy" },
+    { name = "torch" },
+]
+prompt-optimization = [
+    { name = "bm25s" },
+    { name = "datasets" },
+    { name = "diskcache" },
+    { name = "dspy" },
+    { name = "litellm" },
+    { name = "pystemmer" },
+    { name = "ujson" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", marker = "extra == 'frontier-cs'", specifier = ">=0.74.0" },
+    { name = "autograd", marker = "extra == 'math'" },
+    { name = "black", marker = "extra == 'dev'", specifier = ">=22.0.0" },
+    { name = "bm25s", marker = "extra == 'prompt-optimization'", specifier = ">=0.3.0" },
+    { name = "colorlog", marker = "extra == 'frontier-cs'", specifier = ">=6.10.1" },
+    { name = "cvxpy", marker = "extra == 'math'" },
+    { name = "datasets", marker = "extra == 'frontier-cs'", specifier = ">=4.4.1" },
+    { name = "datasets", marker = "extra == 'prompt-optimization'", specifier = ">=4.5.0" },
+    { name = "diskcache", marker = "extra == 'prompt-optimization'", specifier = ">=5.6.3" },
+    { name = "dspy", marker = "extra == 'prompt-optimization'", specifier = ">=3.1.3" },
+    { name = "gepa", extras = ["full"], marker = "extra == 'external'", git = "https://github.com/gepa-ai/gepa.git?branch=main" },
+    { name = "google-genai", marker = "extra == 'frontier-cs'", specifier = ">=1.55.0" },
+    { name = "google-generativeai", marker = "extra == 'frontier-cs'", specifier = ">=0.8.5" },
+    { name = "huggingface-hub", marker = "extra == 'lsr'", specifier = ">=0.20" },
+    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.10.0" },
+    { name = "jax", marker = "extra == 'math'", specifier = ">=0.6.2" },
+    { name = "litellm", marker = "extra == 'external'", specifier = ">=1.81" },
+    { name = "litellm", marker = "extra == 'prompt-optimization'", specifier = ">=1.81" },
+    { name = "matplotlib", marker = "extra == 'math'" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=0.950" },
+    { name = "networkx", specifier = ">=3.2" },
+    { name = "networkx", marker = "extra == 'adrs'", specifier = ">=3.2,<3.4" },
+    { name = "networkx", marker = "extra == 'math'" },
+    { name = "numba", marker = "extra == 'math'" },
+    { name = "numpy", specifier = ">=1.22.0" },
+    { name = "numpy", marker = "extra == 'adrs'", specifier = ">=1.22.0" },
+    { name = "numpy", marker = "extra == 'frontier-cs'", specifier = ">=2.0.0" },
+    { name = "numpy", marker = "extra == 'lsr'", specifier = ">=1.22.0" },
+    { name = "openai", specifier = ">=1.0.0" },
+    { name = "openevolve", marker = "extra == 'external'", git = "https://github.com/algorithmicsuperintelligence/openevolve.git?branch=main" },
+    { name = "optax", marker = "extra == 'math'", specifier = ">=0.2.6" },
+    { name = "pandas", marker = "extra == 'adrs'" },
+    { name = "pandas", marker = "extra == 'math'" },
+    { name = "plotly", marker = "extra == 'math'" },
+    { name = "pyarrow", marker = "extra == 'lsr'", specifier = ">=14.0" },
+    { name = "pymoo", marker = "extra == 'math'" },
+    { name = "pystemmer", marker = "extra == 'prompt-optimization'", specifier = ">=2.2.0.3" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "python-dotenv", marker = "extra == 'frontier-cs'", specifier = ">=1.2.1" },
+    { name = "pywavelets", marker = "extra == 'math'" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "requests", marker = "extra == 'dev'", specifier = ">=2.28.0" },
+    { name = "scikit-learn", marker = "extra == 'math'", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.11.0" },
+    { name = "scipy", marker = "extra == 'lsr'", specifier = ">=1.11.0" },
+    { name = "scipy", marker = "extra == 'math'", specifier = ">=1.11.0" },
+    { name = "skypilot", marker = "extra == 'frontier-cs'", specifier = ">=0.10.5" },
+    { name = "sympy", marker = "extra == 'lsr'", specifier = ">=1.14.0" },
+    { name = "sympy", marker = "extra == 'math'", specifier = ">=1.14.0" },
+    { name = "torch", marker = "extra == 'adrs'" },
+    { name = "torch", marker = "extra == 'math'" },
+    { name = "tqdm", specifier = ">=4.64.0" },
+    { name = "ujson", marker = "extra == 'prompt-optimization'", specifier = ">=5.11.0" },
+]
+provides-extras = ["math", "adrs", "lsr", "external", "dev", "frontier-cs", "prompt-optimization"]
 
 [[package]]
 name = "sqlalchemy"
