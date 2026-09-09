@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ---------------------------------------------------------------------------
+# Environments & tooling
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Secrets — never commit an API key
+# ---------------------------------------------------------------------------
+.env
+secrets.yaml
+
+# ---------------------------------------------------------------------------
+# Run artifacts
+#
+# Every run writes under outputs/. Search traces (snap.json), candidate logs
+# (eval_code_log.jsonl) and summaries land there and are not version-controlled.
+# ---------------------------------------------------------------------------
+outputs/
+outputs_*/
+eval_runs/
+*.log
+
+# ---------------------------------------------------------------------------
+# Benchmark data fetched or generated at setup time
+#
+# These are downloaded by the prepare/download scripts rather than committed,
+# so a clone stays small. See the "Benchmark data" section of README.md.
+# ---------------------------------------------------------------------------
+benchmarks/llm_srbench/data/
+benchmarks/ADRS/eplb/evaluator/expert-load.json
+benchmarks/ADRS/llm_sql/evaluator/datasets/
+tasks/ADRS/llm_sql/datasets/
+runs/
+
+# Terminal archive dumps left behind by a previous run.
+tasks/**/result_snapshot.json
+tasks/**/snapshot.json

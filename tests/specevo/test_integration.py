@@ -1,0 +1,252 @@
+"""
+End-to-end integration tests for specevo.evolve_code().
+
+Mock boundary: BaseClient.acompletion. Everything else runs for real.
+"""
+
+import threading
+
+import pytest
+
+import specevo
+from specevo.clients import BaseClient, ClientResult
+
+PROGRAMS = [
+    "def solve(x):\n    return x * 2",
+    "def solve(x):\n    return x ** 2",
+    "def solve(x):\n    return x + 1",
+    "def solve(x):\n    total = 0\n    for i in range(x):\n        total += i\n    return total",
+    "def solve(x):\n    return max(x * 3, x + 10)",
+    "def solve(x):\n    if x > 3:\n        return x * x\n    return x * 5",
+    "def solve(x):\n    import math\n    return int(math.pow(x, 2))",
+    "def solve(x):\n    return sum(range(x))",
+]
+
+PROMPTS = [
+    "Answer the task.",
+    "Answer the task carefully and show the key reasoning steps.",
+    "Break the task into steps, reason carefully, and verify the final answer before responding.",
+    "Use a structured plan, test edge cases mentally, and present the final answer clearly.",
+]
+
+
+def _score_fn(fn):
+    return {"score": fn(5)}
+
+
+def _score_fn_with_inputs(fn, inputs):
+    return {"score": sum(fn(x) for x in inputs)}
+
+
+def _prompt_score_fn(prompt):
+    lower = prompt.lower()
+    score = 0.0
+    for token in ["step", "careful", "verify", "structured", "final answer"]:
+        if token in lower:
+            score += 1.0
+    return {"score": score}
+
+
+class MockClient(BaseClient):
+    """Thread-safe mock that cycles through deterministic code variants."""
+
+    def __init__(self):
+        super().__init__("fake/test-model")
+        self._counter = 0
+        self._lock = threading.Lock()
+        self.calls = []
+
+    async def acompletion(self, prompt, **kwargs):
+        with self._lock:
+            idx = self._counter % len(PROGRAMS)
+            self._counter += 1
+
+        code = PROGRAMS[idx]
+        content = f"```python\n{code}\n```"
+
+        if isinstance(prompt, list):
+            prompt_text = prompt[0]["content"] if prompt else ""
+        else:
+            prompt_text = prompt
+
+        self.calls.append(
+            {
+                "model": self.model,
+                "prompt_snippet": prompt_text[:200],
+            }
+        )
+
+        return ClientResult(text=content, cost=0.001)
+
+
+class PromptMockClient(BaseClient):
+    """Thread-safe mock that cycles through deterministic prompt variants."""
+
+    def __init__(self):
+        super().__init__("fake/test-prompt-model")
+        self._counter = 0
+        self._lock = threading.Lock()
+        self.calls = []
+
+    async def acompletion(self, prompt, **kwargs):
+        with self._lock:
+            idx = self._counter % len(PROMPTS)
+            self._counter += 1
+
+        content = PROMPTS[idx]
+
+        if isinstance(prompt, list):
+            prompt_text = prompt[0]["content"] if prompt else ""
+        else:
+            prompt_text = prompt
+
+        self.calls.append(
+            {
+                "model": self.model,
+                "prompt_snippet": prompt_text[:200],
+            }
+        )
+
+        return ClientResult(text=content, cost=0.001)
+
+
+@pytest.mark.slow
+class TestFullRun:
+    def test_basic_evolution(self):
+        mock_client = MockClient()
+
+        result = specevo.evolve_code(
+            "Maximize the return value of solve(5)",
+            function_signature="def solve(x):",
+            seed_program="def solve(x):\n    return x",
+            score_fn=_score_fn,
+            model=mock_client,
+            budget_evals=15,
+            init=specevo.InitConfig(n_diverse_seeds=2, n_variants_per_seed=2),
+            pipeline=specevo.PipelineConfig(
+                n_llm_workers=2,
+                n_eval_processes=2,
+                eval_timeout=5.0,
+            ),
+            punctuated_equilibrium=specevo.PunctuatedEquilibriumConfig(
+                enabled=True,
+                interval=5,
+                n_clusters=2,
+                n_variants=1,
+            ),
+            cascade=specevo.CascadeConfig(enabled=False),
+            meta_advice=specevo.MetaAdviceConfig(enabled=False),
+            cvt=specevo.CVTConfig(n_centroids=10, data_driven_centroids=True),
+            behavior=specevo.BehaviorConfig(
+                ast_features=["loop_count", "branch_count", "math_operators"],
+            ),
+        )
+
+        assert result.best_score >= 25
+        assert result.total_evaluations >= 5
+        assert result.archive_size >= 2
+
+        ns = {}
+        exec(result.best_program, ns)
+        actual_score = ns["solve"](5)
+        assert actual_score >= result.best_score
+
+        assert result.total_cost > 0
+        assert 0 < result.runtime_seconds < 60
+        assert len(mock_client.calls) >= 4
+
+    def test_with_cascade(self):
+        mock_client = MockClient()
+
+        result = specevo.evolve_code(
+            "Maximize the sum of solve(x) over inputs",
+            function_signature="def solve(x):",
+            seed_program="def solve(x):\n    return x",
+            score_fn=_score_fn_with_inputs,
+            inputs=[3, 5, 7],
+            model=mock_client,
+            budget_evals=15,
+            init=specevo.InitConfig(n_diverse_seeds=2, n_variants_per_seed=2),
+            pipeline=specevo.PipelineConfig(
+                n_llm_workers=2,
+                n_eval_processes=2,
+                eval_timeout=5.0,
+            ),
+            punctuated_equilibrium=specevo.PunctuatedEquilibriumConfig(enabled=False),
+            cascade=specevo.CascadeConfig(
+                enabled=True,
+                quick_inputs=[3],
+                min_score_ratio=0.5,
+                quick_timeout=5.0,
+            ),
+            meta_advice=specevo.MetaAdviceConfig(enabled=False),
+            cvt=specevo.CVTConfig(n_centroids=10, data_driven_centroids=True),
+            behavior=specevo.BehaviorConfig(
+                ast_features=["loop_count", "branch_count", "math_operators"],
+            ),
+        )
+
+        assert result.best_score >= 50
+        assert result.total_evaluations >= 5
+        assert result.best_program
+        assert result.archive_size >= 1
+
+    def test_no_seed_program(self):
+        mock_client = MockClient()
+
+        result = specevo.evolve_code(
+            "Maximize solve(5)",
+            function_signature="def solve(x):",
+            score_fn=_score_fn,
+            model=mock_client,
+            budget_evals=12,
+            init=specevo.InitConfig(n_diverse_seeds=2, n_variants_per_seed=1),
+            pipeline=specevo.PipelineConfig(
+                n_llm_workers=1,
+                n_eval_processes=2,
+                eval_timeout=5.0,
+            ),
+            punctuated_equilibrium=specevo.PunctuatedEquilibriumConfig(enabled=False),
+            cascade=specevo.CascadeConfig(enabled=False),
+            meta_advice=specevo.MetaAdviceConfig(enabled=False),
+            cvt=specevo.CVTConfig(n_centroids=8, data_driven_centroids=True),
+            behavior=specevo.BehaviorConfig(
+                ast_features=["loop_count", "branch_count", "math_operators"],
+            ),
+        )
+
+        assert result.best_score >= 6
+        assert result.total_evaluations >= 3
+        assert result.best_program
+
+    def test_prompt_evolution_single_prompt(self):
+        mock_client = PromptMockClient()
+
+        result = specevo.evolve_prompts(
+            "Optimize a single instruction prompt for answer quality.",
+            evaluator=_prompt_score_fn,
+            seed_prompt="Answer the task.",
+            model=mock_client,
+            budget_evals=12,
+            init=specevo.InitConfig(n_diverse_seeds=2, n_variants_per_seed=2),
+            pipeline=specevo.PipelineConfig(
+                n_llm_workers=2,
+                n_eval_processes=2,
+                eval_timeout=5.0,
+            ),
+            punctuated_equilibrium=specevo.PunctuatedEquilibriumConfig(
+                enabled=True,
+                interval=4,
+                n_clusters=2,
+                n_variants=1,
+            ),
+            cascade=specevo.CascadeConfig(enabled=False),
+            cvt=specevo.CVTConfig(n_centroids=8, data_driven_centroids=True),
+        )
+
+        assert result.best_score >= 3.0
+        assert result.total_evaluations >= 4
+        assert result.archive_size >= 1
+        assert result.best_prompt
+        assert any(token in result.best_prompt.lower() for token in ["verify", "structured", "step"])
+        assert len(mock_client.calls) >= 3

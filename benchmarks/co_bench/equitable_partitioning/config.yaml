@@ -1,0 +1,29 @@
+# CO-Bench baseline config :: Equitable partitioning problem (Graph & set)
+# Usage: specevo-baselines-run initial_program.py evaluator.py -c config.yaml -s <strategy>
+language: python
+diff_based_generation: true
+max_iterations: 100
+checkpoint_interval: 10
+max_solution_length: 60000
+llm:
+  api_base: https://openrouter.ai/api/v1
+  models:
+    - name: "openrouter/openai/gpt-5"
+      weight: 1.0
+  timeout: 600
+prompt:
+  system_message: 'You are an expert in combinatorial optimization and algorithm design. Your task is to improve the `solve(**kwargs)` function so it returns higher-quality feasible solutions for the combinatorial optimization problem described above.
+
+Scoring (CO-Bench protocol): each solution is normalized against the best-known objective, so a score of 1.0 matches the best-known / optimal solution and higher is always better. A program error, a constraint violation, or exceeding the per-instance time limit scores 0.0 for that instance.
+
+Guidance:
+- Always return a feasible solution in the exact dict schema shown in the template.
+- Each instance is solved under a strict per-instance time limit (10s by default), so favour fast constructive heuristics + light local search over exhaustive search.
+- You may use numpy and the Python standard library.
+'
+evaluator:
+  timeout: 1800
+  cascade_evaluation: false
+monitor:
+  enabled: false
+human_feedback_enabled: false

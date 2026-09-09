@@ -1,0 +1,591 @@
+"""Levi: Main entry point for evolutionary code optimization."""
+
+import asyncio
+import logging
+import re
+import time
+from collections.abc import Callable
+from typing import Any
+
+from ..artifacts import ArtifactAdapter, CodeAdapter, PromptAdapter
+from ..behavior import BehaviorExtractor, FeatureVector
+from ..clients.base import ClientSpec
+from ..config import BehaviorConfig, BudgetConfig, LeviConfig, LeviResult, MetaAdviceConfig
+from ..core import EvaluationResult, Program
+from ..init import Diversifier
+from ..pipeline import PipelineRunner
+from ..pipeline.state import PipelineState, coerce_finite_float
+from ..pool import CVTMAPElitesPool
+from ..prompts import PromptBundle
+from ..utils import ResilientProcessPool, check_api_keys
+
+logger = logging.getLogger(__name__)
+
+
+def _setup_logging() -> None:
+    """Configure logging for levi."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+    logging.getLogger("litellm").setLevel(logging.ERROR)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def _restore_from_snapshot(
+    pool: CVTMAPElitesPool,
+    _extractor: BehaviorExtractor,
+    snapshot: dict,
+    artifact_adapter: ArtifactAdapter | None = None,
+) -> float:
+    """
+    Restore pool state from a snapshot dict.
+
+    Returns the total_cost from the snapshot (used as init_cost for the runner).
+    """
+    import numpy as np
+
+    metadata = snapshot["metadata"]
+    elites = snapshot.get("elites", [])
+    run_state = snapshot.get("run_state", {})
+    resumed_cost = run_state.get("total_cost", 0.0)
+
+    logger.info(f"[Resume] Restoring {len(elites)} elites, prior cost: ${resumed_cost:.3f}")
+
+    centroids_arr = np.asarray(metadata["centroids"], dtype=float)
+    if centroids_arr.ndim != 2 or centroids_arr.shape[0] <= 0 or centroids_arr.shape[1] != pool._n_dims:
+        raise RuntimeError(
+            f"Invalid centroid matrix in snapshot: expected (N,{pool._n_dims}), got shape {centroids_arr.shape}"
+        )
+    pool._centroids = centroids_arr
+    pool._n_centroids = centroids_arr.shape[0]
+
+    normalization = metadata["normalization"]
+    mins_arr = np.asarray(normalization["mins"], dtype=float)
+    maxs_arr = np.asarray(normalization["maxs"], dtype=float)
+    ranges_arr = np.asarray(normalization["ranges"], dtype=float)
+    if mins_arr.shape != (pool._n_dims,) or maxs_arr.shape != (pool._n_dims,) or ranges_arr.shape != (pool._n_dims,):
+        raise RuntimeError(f"Invalid normalization bounds in snapshot: expected vectors of length {pool._n_dims}")
+    pool._mins = mins_arr
+    pool._maxs = maxs_arr
+    pool._ranges = ranges_arr
+
+    # Restore elites into pool
+    restored = 0
+    for elite_data in elites:
+        if artifact_adapter is not None:
+            content = artifact_adapter.snapshot_content(elite_data)
+        elif "content" in elite_data:
+            content = elite_data["content"]
+        else:
+            content = elite_data["code"]
+        program = Program(
+            content=content,
+            metadata=elite_data.get("metadata", {}),
+        )
+        eval_result = EvaluationResult(
+            scores=elite_data["scores"],
+            is_valid=True,
+        )
+        behavior_values = elite_data["behavior"]
+        if not isinstance(behavior_values, dict):
+            raise RuntimeError("Invalid elite behavior in snapshot (expected dict)")
+        behavior = FeatureVector({k: float(v) for k, v in behavior_values.items()})
+        accepted = bool(pool.add_at_cell(int(elite_data["cell_index"]), program, eval_result, behavior))
+        if not accepted:
+            raise RuntimeError(f"Failed to restore elite for cell {elite_data['cell_index']}")
+
+        if accepted:
+            restored += 1
+
+    logger.info(f"[Resume] Restored {restored}/{len(elites)} elites into pool")
+    return resumed_cost
+
+
+def _activate_proxy_benchmark_discovery_inputs(config: LeviConfig) -> None:
+    proxy_cfg = config.proxy_benchmark
+    if proxy_cfg.enabled and proxy_cfg.discovery_inputs:
+        config.inputs = list(proxy_cfg.discovery_inputs)
+
+
+def _restore_proxy_benchmark_state(config: LeviConfig, snapshot: dict | None = None) -> None:
+    proxy_cfg = config.proxy_benchmark
+    if not (proxy_cfg.enabled and proxy_cfg.discovery_inputs):
+        return
+
+    snapshot_metadata = ((snapshot or {}).get("metadata") or {}).get("proxy_benchmark") or {}
+    raw_indices = snapshot_metadata.get("selected_indices") or proxy_cfg.selected_indices
+    if not raw_indices:
+        config.inputs = list(proxy_cfg.discovery_inputs)
+        return
+
+    selected_indices = []
+    for raw_index in raw_indices:
+        idx = int(raw_index)
+        if idx < 0 or idx >= len(proxy_cfg.discovery_inputs):
+            raise RuntimeError(f"Invalid proxy benchmark index in snapshot: {idx}")
+        selected_indices.append(idx)
+
+    proxy_cfg.selected_indices = selected_indices
+    config.inputs = [proxy_cfg.discovery_inputs[idx] for idx in selected_indices]
+
+
+def _build_config(
+    problem_description: str,
+    function_signature: str,
+    seed_program: str | None,
+    score_fn: Callable[..., dict],
+    inputs: list[Any] | None,
+    model: ClientSpec | list[ClientSpec] | None,
+    paradigm_model: ClientSpec | list[ClientSpec] | None,
+    mutation_model: ClientSpec | list[ClientSpec] | None,
+    budget_dollars: float | None,
+    budget_evals: int | None,
+    budget_seconds: float | None,
+    target_score: float | None = None,
+    **kwargs: Any,
+) -> LeviConfig:
+    """Build LeviConfig from evolve_code() parameters."""
+    # Validate function_signature
+    if not re.search(r"def\s+\w+\s*\(", function_signature):
+        raise ValueError(
+            f"Invalid function_signature: must contain a Python function definition "
+            f"(e.g. 'def solve(x):'). Got: {function_signature!r}"
+        )
+
+    # Resolve models
+    if model is not None and (paradigm_model is not None or mutation_model is not None):
+        raise ValueError(
+            "Cannot specify both 'model' and 'paradigm_model'/'mutation_model'. "
+            "Use 'model' for a single model, or 'paradigm_model'/'mutation_model' for separate models."
+        )
+
+    if model is not None:
+        resolved_paradigm = model
+        resolved_mutation = model
+    elif paradigm_model is not None or mutation_model is not None:
+        resolved_paradigm = paradigm_model or mutation_model
+        resolved_mutation = mutation_model or paradigm_model
+    else:
+        raise ValueError("Must specify 'model' (for both), or 'paradigm_model' and/or 'mutation_model'.")
+
+    # Build budget
+    if budget_dollars is None and budget_evals is None and budget_seconds is None:
+        raise ValueError(
+            "Must specify at least one budget constraint: budget_dollars, budget_evals, or budget_seconds."
+        )
+    budget = BudgetConfig(
+        dollars=budget_dollars,
+        evaluations=budget_evals,
+        seconds=budget_seconds,
+        target_score=target_score,
+    )
+
+    # Reject kwargs that overlap with explicit params
+    _EXPLICIT_PARAMS = {
+        "problem_description",
+        "function_signature",
+        "seed_program",
+        "score_fn",
+        "inputs",
+        "paradigm_models",
+        "mutation_models",
+        "budget",
+    }
+    overlap = set(kwargs) & _EXPLICIT_PARAMS
+    if overlap:
+        raise ValueError(f"Use the explicit parameters instead of **kwargs for: {overlap}")
+
+    config_dict: dict[str, Any] = {
+        "problem_description": problem_description,
+        "function_signature": function_signature,
+        "seed_program": seed_program,
+        "score_fn": score_fn,
+        "paradigm_models": resolved_paradigm,
+        "mutation_models": resolved_mutation,
+        "budget": budget,
+    }
+    if inputs is not None:
+        config_dict["inputs"] = inputs
+
+    config_dict.update(kwargs)
+    return LeviConfig(**config_dict)
+
+
+def _build_prompt_config(
+    problem_description: str,
+    seed_prompt: "str | dict[str, str] | PromptBundle | None",
+    evaluator: Callable[..., dict],
+    inputs: list[Any] | None,
+    model: ClientSpec | list[ClientSpec] | None,
+    paradigm_model: ClientSpec | list[ClientSpec] | None,
+    mutation_model: ClientSpec | list[ClientSpec] | None,
+    budget_dollars: float | None,
+    budget_evals: int | None,
+    budget_seconds: float | None,
+    target_score: float | None = None,
+    **kwargs: Any,
+) -> LeviConfig:
+    """Build LeviConfig for prompt evolution."""
+    if model is not None and (paradigm_model is not None or mutation_model is not None):
+        raise ValueError(
+            "Cannot specify both 'model' and 'paradigm_model'/'mutation_model'. "
+            "Use 'model' for a single model, or 'paradigm_model'/'mutation_model' for separate models."
+        )
+
+    if model is not None:
+        resolved_paradigm = model
+        resolved_mutation = model
+    elif paradigm_model is not None or mutation_model is not None:
+        resolved_paradigm = paradigm_model or mutation_model
+        resolved_mutation = mutation_model or paradigm_model
+    else:
+        raise ValueError("Must specify 'model' (for both), or 'paradigm_model' and/or 'mutation_model'.")
+
+    if budget_dollars is None and budget_evals is None and budget_seconds is None:
+        raise ValueError(
+            "Must specify at least one budget constraint: budget_dollars, budget_evals, or budget_seconds."
+        )
+
+    budget = BudgetConfig(
+        dollars=budget_dollars,
+        evaluations=budget_evals,
+        seconds=budget_seconds,
+        target_score=target_score,
+    )
+
+    # Normalize seed_prompt. Single string keeps legacy (content is raw text);
+    # dict / PromptBundle switches on bundle mode (content is serialized JSON).
+    seed_bundle: PromptBundle | None = None
+    if seed_prompt is None:
+        seed_program = None
+    elif isinstance(seed_prompt, str):
+        seed_program = seed_prompt
+    else:
+        seed_bundle = PromptBundle.from_value(seed_prompt)
+        seed_program = seed_bundle.serialize()
+
+    config_dict: dict[str, Any] = {
+        "problem_description": problem_description,
+        "function_signature": "def prompt_artifact():",
+        "seed_program": seed_program,
+        "score_fn": evaluator,
+        "paradigm_models": resolved_paradigm,
+        "mutation_models": resolved_mutation,
+        "budget": budget,
+        "meta_advice": MetaAdviceConfig(enabled=False),
+        "behavior": BehaviorConfig(ast_features=[], score_keys=["score"]),
+    }
+    if inputs is not None:
+        config_dict["inputs"] = inputs
+
+    config_dict.update(kwargs)
+    return LeviConfig(**config_dict), seed_bundle
+
+
+def evolve_code(
+    problem_description: str,
+    *,
+    function_signature: str,
+    seed_program: str | None = None,
+    score_fn: Callable[..., dict],
+    inputs: list[Any] | None = None,
+    model: ClientSpec | list[ClientSpec] | None = None,
+    paradigm_model: ClientSpec | list[ClientSpec] | None = None,
+    mutation_model: ClientSpec | list[ClientSpec] | None = None,
+    budget_dollars: float | None = None,
+    budget_evals: int | None = None,
+    budget_seconds: float | None = None,
+    target_score: float | None = None,
+    resume_snapshot: dict | None = None,
+    **kwargs: Any,
+) -> LeviResult:
+    """
+    Run Levi evolutionary code optimization.
+
+    Simple usage::
+
+        import specevo
+
+        result = specevo.evolve_code(
+            "Optimize bin packing to minimize wasted space",
+            function_signature="def pack(items, bin_capacity):",
+            score_fn=my_scorer,
+            model="openai/gpt-4o-mini",
+            budget_dollars=5.0,
+        )
+
+    With separate paradigm/mutation models::
+
+        result = specevo.evolve_code(
+            problem_description,
+            function_signature=sig,
+            seed_program=seed,
+            score_fn=scorer,
+            paradigm_model="openai/gpt-4o",
+            mutation_model="openai/gpt-4o-mini",
+            budget_dollars=10.0,
+        )
+
+    Power users can pass any LeviConfig field via **kwargs::
+
+        result = specevo.evolve_code(
+            ...,
+            punctuated_equilibrium=levi.PunctuatedEquilibriumConfig(enabled=True),
+            pipeline=levi.PipelineConfig(n_llm_workers=8),
+            output_dir="runs/experiment_1",
+        )
+
+    Args:
+        problem_description: Natural language description of the optimization problem.
+        function_signature: Python function signature to optimize (e.g. "def solve(x):").
+        seed_program: Initial working implementation. If None, init generates
+            starting programs automatically from the function signature.
+        score_fn: Evaluation function returning a dict with at least {"score": float}.
+            Accepts either score_fn(fn) or score_fn(fn, inputs).
+        inputs: Optional test inputs passed to score_fn. Can be omitted if
+            score_fn only takes one argument.
+        model: Model for both paradigm shifts and mutations. Use litellm format
+            (e.g. "openai/gpt-4o-mini"). Mutually exclusive with paradigm_model/mutation_model.
+        paradigm_model: Model(s) for paradigm shifts (heavier, creative).
+        mutation_model: Model(s) for incremental mutations (lighter, fast).
+        budget_dollars: Maximum dollar spend.
+        budget_evals: Maximum number of evaluations.
+        budget_seconds: Maximum wall-clock seconds.
+        resume_snapshot: Optional snapshot dict to resume a previous run.
+        **kwargs: Advanced overrides — any LeviConfig field (e.g. pipeline,
+            punctuated_equilibrium, output_dir). For custom endpoints or
+            explicit pricing, pass ``levi.LM(...)`` as a model.
+
+    Returns:
+        LeviResult with best_program, best_score, and run statistics.
+    """
+    config = _build_config(
+        problem_description=problem_description,
+        function_signature=function_signature,
+        seed_program=seed_program,
+        score_fn=score_fn,
+        inputs=inputs,
+        model=model,
+        paradigm_model=paradigm_model,
+        mutation_model=mutation_model,
+        budget_dollars=budget_dollars,
+        budget_evals=budget_evals,
+        budget_seconds=budget_seconds,
+        target_score=target_score,
+        **kwargs,
+    )
+    return asyncio.run(_run_async(config, resume_snapshot=resume_snapshot))
+
+
+def evolve_prompts(
+    problem_description: str,
+    *,
+    evaluator: Callable[..., dict],
+    seed_prompt: "str | dict[str, str] | PromptBundle | None" = None,
+    inputs: list[Any] | None = None,
+    model: ClientSpec | list[ClientSpec] | None = None,
+    paradigm_model: ClientSpec | list[ClientSpec] | None = None,
+    mutation_model: ClientSpec | list[ClientSpec] | None = None,
+    budget_dollars: float | None = None,
+    budget_evals: int | None = None,
+    budget_seconds: float | None = None,
+    target_score: float | None = None,
+    resume_snapshot: dict | None = None,
+    **kwargs: Any,
+) -> LeviResult:
+    """Run Levi evolutionary prompt optimization.
+
+    `seed_prompt` may be a raw string (single-prompt evolution, backward compatible),
+    a `dict[str, str]`, or a `PromptBundle` to evolve multiple named components.
+    """
+    config, seed_bundle = _build_prompt_config(
+        problem_description=problem_description,
+        seed_prompt=seed_prompt,
+        evaluator=evaluator,
+        inputs=inputs,
+        model=model,
+        paradigm_model=paradigm_model,
+        mutation_model=mutation_model,
+        budget_dollars=budget_dollars,
+        budget_evals=budget_evals,
+        budget_seconds=budget_seconds,
+        target_score=target_score,
+        **kwargs,
+    )
+    adapter = PromptAdapter(config, seed_bundle=seed_bundle)
+    return asyncio.run(_run_async(config, resume_snapshot=resume_snapshot, artifact_adapter=adapter))
+
+
+async def _evaluate_seed(
+    config: LeviConfig,
+    executor: ResilientProcessPool,
+    state: PipelineState,
+    artifact_adapter: ArtifactAdapter,
+) -> dict | None:
+    """Evaluate the seed program and return its result dict when successful."""
+    logger.info("[Levi] Evaluating seed program")
+
+    if not await state.try_start_evaluation():
+        raise RuntimeError("Budget exhausted before seed evaluation")
+
+    try:
+        seed_result = await artifact_adapter.evaluate(executor, config.seed_program or "")
+    except Exception as e:
+        error_message = f"Seed program evaluation failed: {e}"
+        state.record_error(error_message)
+        logger.warning("[Levi] %s", error_message)
+        logger.warning("[Levi] Continuing without a scored seed program")
+        return None
+    finally:
+        await state.finish_evaluation()
+
+    if "error" in seed_result:
+        error_message = f"Seed program evaluation error: {seed_result['error']}"
+        state.record_error(error_message)
+        logger.warning("[Levi] %s", error_message)
+        logger.warning("[Levi] Continuing without a scored seed program")
+        return None
+
+    seed_score = seed_result.get("score", 0.0)
+    state.record_accept()
+    state.record_score(
+        score=seed_score,
+        accepted=True,
+        sampler="seed",
+        archive_size=0,
+        cell_index=None,
+    )
+    logger.info(f"[Levi] Seed score: {seed_score:.17g}")
+    return seed_result
+
+
+async def _run_async(
+    config: LeviConfig,
+    resume_snapshot: dict | None = None,
+    artifact_adapter: ArtifactAdapter | None = None,
+) -> LeviResult:
+    """Internal async implementation."""
+    check_api_keys([*config.paradigm_models, *config.mutation_models])
+
+    run_start_time = time.time()
+    _setup_logging()
+    state = PipelineState(config.budget, start_time=run_start_time)
+    state.configure_client_defaults(
+        temperature=config.pipeline.temperature,
+        max_tokens=config.pipeline.max_tokens,
+    )
+    state.configure_client_concurrency(config.pipeline.n_llm_workers)
+
+    logger.info("[Levi] Starting evolutionary optimization")
+    logger.info(f"[Levi] Budget: {config.budget}")
+    logger.info(f"[Levi] Sampler-model pairs: {len(config.sampler_model_pairs)}")
+    artifact_adapter = artifact_adapter or CodeAdapter(config)
+    if artifact_adapter.artifact_type == "prompt":
+        _activate_proxy_benchmark_discovery_inputs(config)
+
+    # Run prompt optimization if enabled. The prompt bank fully replaces
+    # prompt_opt when both are turned on — they share the "## Output" override
+    # slot, so running both would be ambiguous.
+    if (
+        artifact_adapter.artifact_type == "code"
+        and config.prompt_opt.enabled
+        and not config.prompt_overrides
+    ):
+        if config.prompt_bank.enabled:
+            logger.warning(
+                "[Levi] prompt_bank is enabled — skipping DSPy prompt_opt to avoid override conflicts"
+            )
+        else:
+            from ..prompt_opt import optimize_prompts
+
+            overrides, opt_cost = optimize_prompts(config)
+            config.prompt_overrides = overrides
+            state.total_cost += opt_cost
+            logger.info(f"[Levi] Prompt optimization cost: ${opt_cost:.3f}")
+
+    # Create behavior extractor
+    extractor = BehaviorExtractor(
+        ast_features=config.behavior.ast_features,
+        score_keys=config.behavior.score_keys,
+        custom_extractors=config.behavior.custom_extractors or None,
+    )
+
+    # Create CVT pool
+    pool = CVTMAPElitesPool(
+        behavior_extractor=extractor,
+        n_centroids=config.cvt.n_centroids,
+        data_driven_centroids=config.cvt.data_driven_centroids,
+    )
+
+    for pair in config.sampler_model_pairs:
+        pool.register_sampler_model_pair(
+            pair.sampler,
+            pair.model,
+            pair.weight,
+            mutation_prompt_id=pair.mutation_prompt_id,
+            llm_temperature=pair.llm_temperature,
+        )
+
+    # Create executor
+    executor = ResilientProcessPool(max_workers=config.pipeline.n_eval_processes)
+
+    try:
+        # Resume from snapshot or run init
+        init_cost = 0.0
+        init_score_history = []
+        if resume_snapshot is not None:
+            # Skip seed eval on resume — init phase is skipped and the
+            # archive already contains the seed (with its scores).
+            init_cost = _restore_from_snapshot(pool, extractor, resume_snapshot, artifact_adapter=artifact_adapter)
+            if artifact_adapter.artifact_type == "prompt":
+                _restore_proxy_benchmark_state(config, resume_snapshot)
+            state.total_cost = coerce_finite_float(init_cost, default=0.0)
+        else:
+            seed_result = await _evaluate_seed(config, executor, state, artifact_adapter) if config.seed_program else None
+            logger.info("[Levi] Running init phase")
+            diversifier = Diversifier(config, executor, artifact_adapter, state)
+            init_cost, init_score_history = await diversifier.run(pool, config.seed_program, seed_result, extractor)
+            logger.info(f"[Levi] Init phase complete, cost: ${init_cost:.3f}")
+
+            # SAL — snapshot σ₀ from init-phase scores so future
+            # extensions (and the diagnostic logs) have a baseline to
+            # compare recent score-std against.
+            try:
+                state.finalize_init_baseline(config.sal.sigma_window)
+            except Exception as e:
+                logger.warning(f"[SAL] finalize_init_baseline failed (ignored): {e}")
+
+        # Run main pipeline
+        logger.info("[Levi] Starting evolution pipeline")
+        runner = PipelineRunner(
+            config,
+            pool,
+            executor,
+            artifact_adapter=artifact_adapter,
+            output_dir=config.output_dir,
+            init_cost=init_cost,
+            init_score_history=init_score_history,
+            start_time=run_start_time,
+            state=state,
+        )
+        result = await runner.run()
+
+        logger.info(
+            f"[Levi] Complete - best score: {result.best_score:.17g}, "
+            f"evals: {result.total_evaluations}, cost: ${result.total_cost:.3f}"
+        )
+        if config.output_dir:
+            logger.info(f"[Levi] Snapshot: {config.output_dir}/snapshot.json")
+        content_preview = result.best_program[:500]
+        if len(result.best_program) > 500:
+            content_preview += "..."
+        logger.info(f"[Levi] Best {artifact_adapter.artifact_type}:\n{content_preview}")
+
+        return result
+
+    finally:
+        await state.close_clients()
+        executor.shutdown()

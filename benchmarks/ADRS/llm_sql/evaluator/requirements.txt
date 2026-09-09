@@ -1,0 +1,5 @@
+# Pin to the 2.x line: the reorder() seed program assigns whole mixed-type rows
+# into integer-typed columns (df.loc[i] = row), which pandas 3.x rejects with a
+# TypeError instead of silently upcasting as 2.x does.
+pandas>=2.0,<3.0
+networkx>=3.2,<3.4

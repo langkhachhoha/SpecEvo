@@ -1,0 +1,692 @@
+"""
+EPLB (Expert Parallelism Load Balancer) Problem Definition.
+
+Contains problem description, prompts, scoring function, and test inputs.
+"""
+
+import os
+import json
+import time
+from pathlib import Path
+
+try:
+    import torch
+except ModuleNotFoundError as e:
+    if e.name == "torch":
+        raise RuntimeError(
+            "EPLB requires torch. From the repo root, run:\n"
+            "  uv sync --extra example-eplb"
+        ) from e
+    raise
+
+# --- EPLB Constants ---
+NUM_REPLICAS = 288
+NUM_GROUPS = 8
+NUM_GPUS = 32
+NUM_NODES = 4
+REBALANCE_INTERVAL = 100
+
+ADRS_EXAMPLE_DATA_ROOT_ENV = "ADRS_EXAMPLE_DATA_ROOT"
+
+# --- Prompts ---
+PROBLEM_DESCRIPTION = """
+# EPLB Problem
+
+Optimize expert placement for MoE models. Map 64 logical experts to 288 physical GPU slots.
+
+## Critical Constraints (violations = 0 score)
+- expert_count.sum(dim=1) == 288 for ALL layers
+- All experts need >= 1 replica (no zeros in expert_count)
+- Physical indices: 0-287 (NOT 288! Use range(288) not range(289))
+- Logical indices: 0-63
+- All outputs must be dtype=torch.int64
+
+## Input
+- `weight`: [layers, 64] - load per logical expert
+- `num_replicas`: 288 total physical slots
+- `num_gpus`: 32 GPUs (9 slots each)
+
+## Output
+- `physical_to_logical_map`: [layers, 288] - values 0-63
+- `logical_to_physical_map`: [layers, 64, X] - physical slots or -1
+- `expert_count`: [layers, 64] - replicas per expert, sum=288
+
+## Objective
+Maximize GPU load balancedness while keeping computation fast.
+
+## Common Pitfalls (CODE DEFENSIVELY — these all cause score=0)
+
+**1. Integer dtype on `weight`.** Input may be `int64`. Any `.mean()`,
+`.std()`, `torch.linalg.*`, `torch.matmul` on an int tensor raises
+`Expected a floating point or complex dtype`. **Always start with:**
+```python
+weight = weight.float()
+```
+
+**2. Output dtype must be `torch.int64`.** Returns must be index tensors:
+```python
+return phy2log.long(), log2phy.long(), logcnt.long()
+```
+Mixing in `.float()` or `.scatter_(...)` with a float source raises
+`result type Float can't be cast to the desired output type Long`.
+
+**3. Replica budget.** `logcnt.sum(dim=1)` must equal `num_replicas` (288),
+NOT `num_logical_experts` (64). One replica per logical expert is wrong.
+
+**4. No zero replicas.** Every logical expert needs `logcnt[layer, expert] >= 1`.
+
+**5. Index bounds.** Physical indices are `0..num_replicas-1`. NEVER index
+`logcnt` at `num_replicas` or use `range(num_replicas + 1)`.
+
+**6. No external libraries.** Only `torch` and Python stdlib. No `torch_sparse`,
+`scipy`, `sklearn`, `numpy`. Implement eigendecomposition, SVD, etc. using
+`torch` ops directly (or skip them entirely — most placement strategies
+don't need linear algebra).
+
+**7. No invented APIs.** `torch.shuffle` does NOT exist — use `torch.randperm(n)`.
+Verify any unusual `torch.foo` call exists in the docs.
+
+**8. Don't shadow `num_replicas`.** Reusing it as a loop variable breaks
+downstream code that reads the parameter.
+
+**9. Don't hardcode shapes.** Read dimensions from the input:
+`num_layers, num_logical_experts = weight.shape`. Don't assume `64` if the
+test uses a different size.
+
+## Required Output Construction
+A correct skeleton looks like this — adapt the assignment logic in the middle
+but keep the I/O construction:
+```python
+def rebalance_experts(weight, num_replicas, num_groups, num_nodes, num_gpus):
+    weight = weight.float()                          # MUST cast
+    num_layers, num_logical_experts = weight.shape
+
+    # ----- your placement strategy fills these two arrays -----
+    # phy2log[l, p] = which logical expert lives at physical slot p
+    phy2log = torch.zeros(num_layers, num_replicas, dtype=torch.int64)
+    # logcnt[l, e] = how many physical slots logical expert e occupies
+    logcnt  = torch.zeros(num_layers, num_logical_experts, dtype=torch.int64)
+    # (your algorithm here — must satisfy logcnt.sum(dim=1) == num_replicas
+    #  and logcnt > 0 everywhere)
+    # ----------------------------------------------------------
+
+    # log2phy is mechanically derivable from phy2log + logcnt:
+    max_replicas = int(logcnt.max().item())
+    log2phy = torch.full((num_layers, num_logical_experts, max_replicas),
+                         -1, dtype=torch.int64)
+    for l in range(num_layers):
+        next_slot = torch.zeros(num_logical_experts, dtype=torch.int64)
+        for p in range(num_replicas):
+            e = int(phy2log[l, p].item())
+            log2phy[l, e, next_slot[e]] = p
+            next_slot[e] += 1
+
+    return phy2log, log2phy, logcnt
+```
+"""
+
+FUNCTION_SIGNATURE = """
+import torch
+
+def rebalance_experts(
+    weight: torch.Tensor,
+    num_replicas: int,
+    num_groups: int,
+    num_nodes: int,
+    num_gpus: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    '''
+    Rearrange and replicate logical experts across physical GPU slots.
+
+    Parameters:
+        weight: [layers, num_logical_experts], load statistics
+        num_replicas: 288 (physical experts)
+        num_groups: 8
+        num_nodes: 4
+        num_gpus: 32
+
+    Returns:
+        physical_to_logical_map: [layers, num_replicas]
+        logical_to_physical_map: [layers, num_logical_experts, X]
+        expert_count: [layers, num_logical_experts]
+    '''
+    pass
+"""
+
+SEED_PROGRAM = '''"""Expert parallelism load balancer for MoE models in distributed inference."""
+
+import torch
+
+
+def balanced_packing(weight: torch.Tensor,
+                     num_packs: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Pack n weighted objects to m packs, such that each bin contains exactly
+    n/m objects and the weights of all packs are as balanced as possible.
+    """
+    num_layers, num_groups = weight.shape
+    assert num_groups % num_packs == 0
+    groups_per_pack = num_groups // num_packs
+
+    if groups_per_pack == 1:
+        pack_index = torch.arange(weight.size(-1),
+                                  dtype=torch.int64,
+                                  device=weight.device).expand(weight.shape)
+        rank_in_pack = torch.zeros_like(weight, dtype=torch.int64)
+        return pack_index, rank_in_pack
+
+    indices = weight.float().sort(-1, descending=True).indices.cpu()
+    pack_index = torch.full_like(weight,
+                                 fill_value=-1,
+                                 dtype=torch.int64,
+                                 device="cpu")
+    rank_in_pack = torch.full_like(pack_index, fill_value=-1)
+    for i in range(num_layers):
+        pack_weights = [0] * num_packs
+        pack_items = [0] * num_packs
+        for group in indices[i]:
+            pack = min(
+                (i
+                 for i in range(num_packs) if pack_items[i] < groups_per_pack),
+                key=pack_weights.__getitem__,
+            )
+            assert pack_items[pack] < groups_per_pack
+            pack_index[i, group] = pack
+            rank_in_pack[i, group] = pack_items[pack]
+            pack_weights[pack] += weight[i, group]
+            pack_items[pack] += 1
+    return pack_index, rank_in_pack
+
+
+def replicate_experts(
+        weight: torch.Tensor,
+        num_phy: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Replicate `num_log` experts to `num_phy` replicas, such that the maximum
+    load of all replicas is minimized.
+    """
+    n, num_log = weight.shape
+    num_redundant = num_phy - num_log
+    assert num_redundant >= 0
+    device = weight.device
+    phy2log = torch.arange(num_phy, dtype=torch.int64,
+                           device=device).repeat(n, 1)
+    rank = torch.zeros(n, num_phy, dtype=torch.int64, device=device)
+    logcnt = torch.ones(n, num_log, dtype=torch.int64, device=device)
+    arangen = torch.arange(n, dtype=torch.int64, device=device)
+    for i in range(num_log, num_phy):
+        redundant_indices = (weight / logcnt).max(dim=-1).indices
+        phy2log[:, i] = redundant_indices
+        rank[:, i] = logcnt[arangen, redundant_indices]
+        logcnt[arangen, redundant_indices] += 1
+    return phy2log, rank, logcnt
+
+
+def rebalance_experts_hierarchical(
+    weight: torch.Tensor,
+    num_physical_experts: int,
+    num_groups: int,
+    num_nodes: int,
+    num_gpus: int,
+):
+    """Hierarchical load balancing: nodes -> GPUs -> experts."""
+    num_layers, num_logical_experts = weight.shape
+    assert num_logical_experts % num_groups == 0
+    group_size = num_logical_experts // num_groups
+    assert num_groups % num_nodes == 0
+    groups_per_node = num_groups // num_nodes
+    assert num_gpus % num_nodes == 0
+    assert num_physical_experts % num_gpus == 0
+    phy_experts_per_gpu = num_physical_experts // num_gpus
+
+    def inverse(perm: torch.Tensor) -> torch.Tensor:
+        inv = torch.empty_like(perm)
+        inv.scatter_(
+            1,
+            perm,
+            torch.arange(perm.size(1), dtype=torch.int64,
+                         device=perm.device).expand(perm.shape),
+        )
+        return inv
+
+    # Step 1: pack groups to nodes
+    tokens_per_group = weight.unflatten(-1, (num_groups, group_size)).sum(-1)
+    group_pack_index, group_rank_in_pack = balanced_packing(
+        tokens_per_group, num_nodes)
+    log2mlog = (((group_pack_index * groups_per_node + group_rank_in_pack) *
+                 group_size).unsqueeze(-1) +
+                torch.arange(group_size,
+                             dtype=torch.int64,
+                             device=group_pack_index.device)).flatten(-2)
+    mlog2log = inverse(log2mlog)
+
+    # Step 2: construct redundant experts within nodes
+    tokens_per_mlog = weight.gather(-1, mlog2log).view(
+        -1, num_logical_experts // num_nodes)
+    phy2mlog, phyrank, mlogcnt = replicate_experts(
+        tokens_per_mlog, num_physical_experts // num_nodes)
+
+    # Step 3: pack physical_experts to GPUs
+    tokens_per_phy = (tokens_per_mlog / mlogcnt).gather(-1, phy2mlog)
+    pack_index, rank_in_pack = balanced_packing(tokens_per_phy,
+                                                num_gpus // num_nodes)
+    phy2pphy = pack_index * phy_experts_per_gpu + rank_in_pack
+    pphy2phy = inverse(phy2pphy)
+
+    pphy2mlog = phy2mlog.gather(-1, pphy2phy)
+    pphy2mlog = (pphy2mlog.view(num_layers, num_nodes, -1) + torch.arange(
+        0,
+        num_logical_experts,
+        num_logical_experts // num_nodes,
+        device=group_pack_index.device,
+    ).view(1, -1, 1)).flatten(-2)
+    pphy2log = mlog2log.gather(-1, pphy2mlog)
+    pphyrank = phyrank.gather(-1, pphy2phy).view(num_layers, -1)
+    logcnt = mlogcnt.view(num_layers, -1).gather(-1, log2mlog)
+    return pphy2log, pphyrank, logcnt
+
+
+def rebalance_experts(
+    weight: torch.Tensor,
+    num_replicas: int,
+    num_groups: int,
+    num_nodes: int,
+    num_gpus: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Entry point for expert-parallelism load balancer.
+    """
+    num_layers, num_logical_experts = weight.shape
+    weight = weight.float().cpu()
+    if num_groups % num_nodes == 0:
+        phy2log, phyrank, logcnt = rebalance_experts_hierarchical(
+            weight, num_replicas, num_groups, num_nodes, num_gpus)
+    else:
+        phy2log, phyrank, logcnt = rebalance_experts_hierarchical(
+            weight, num_replicas, 1, 1, num_gpus)
+    num_redundant_experts = num_replicas - num_logical_experts
+    maxlogcnt = num_redundant_experts + 1
+    log2phy: torch.Tensor = torch.full(
+        (num_layers, num_logical_experts, maxlogcnt),
+        -1,
+        dtype=torch.int64,
+        device=logcnt.device,
+    )
+    log2phy.view(num_layers, -1).scatter_(
+        -1,
+        phy2log * maxlogcnt + phyrank,
+        torch.arange(num_replicas, dtype=torch.int64,
+                     device=log2phy.device).expand(num_layers, -1),
+    )
+    return phy2log, log2phy, logcnt
+'''
+
+SEED_INSPIRATIONS = []
+
+DIVERSITY_SEED_PROMPT = """
+# EPLB (Expert Parallelism Load Balancer) Optimization
+
+## Problem
+Optimize expert placement for MoE models. Map 64 logical experts to 288 physical GPU slots
+to maximize GPU load balancedness.
+
+## Key Concepts
+- 64 logical experts must be replicated to fill 288 physical slots across 32 GPUs
+- Higher-load experts should get more replicas
+- Physical placement across GPUs affects load balance
+- Hierarchical structure: 4 nodes, 8 groups, 32 GPUs
+
+## Input
+- `weight`: [layers, 64] - load per logical expert
+- `num_replicas`: 288 total physical slots
+- `num_gpus`: 32 GPUs (9 slots each)
+
+## Function Signature
+```python
+def rebalance_experts(
+    weight: torch.Tensor,
+    num_replicas: int,
+    num_groups: int,
+    num_nodes: int,
+    num_gpus: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    '''Returns (physical_to_logical_map, logical_to_physical_map, expert_count).'''
+    pass
+```
+
+## Available Imports
+You may import `torch` and Python standard library modules ONLY.
+Do NOT import `torch_sparse`, `scipy`, `sklearn`, `numpy`, etc. — they are
+unavailable and will fail with `ModuleNotFoundError`. Most placement
+strategies need NO linear algebra at all; favor simple sorting + counting.
+
+## Hard Constraints (violations = score 0)
+Every solution MUST:
+1. Start with `weight = weight.float()` (input may be int64).
+2. Read sizes from input: `num_layers, num_logical_experts = weight.shape`.
+   Do NOT hardcode `64` — accept any logical-expert count.
+3. Return `(phy2log, log2phy, logcnt)` all with `dtype=torch.int64`
+   (use `.long()`).
+4. `logcnt.sum(dim=1) == num_replicas` for every layer (288 total replicas,
+   NOT 64).
+5. `logcnt[l, e] >= 1` for every (layer, expert) — no zero replicas.
+6. Physical indices in `phy2log` and `log2phy` are in `[0, num_replicas - 1]`.
+7. Use only `torch` + stdlib. No `torch.shuffle` (use `torch.randperm`).
+
+## Your Task: STRATEGIC DIVERSITY (not algorithmic novelty)
+
+Pick ONE of these strategic approaches and implement it CORRECTLY. A SIMPLE
+working solution is far more valuable than an EXOTIC broken one. Avoid
+spectral methods, eigendecomposition, custom power iteration, etc. — they
+are nearly always implemented incorrectly.
+
+**Strategy A — Greedy load balancing**
+Replicate experts in proportion to load: `replicas_e = round(load_e / mean * num_replicas / num_logical)`,
+clamp to >=1 and rescale so the sum equals `num_replicas`. Then assign
+physical slots round-robin or by largest-remainder.
+
+**Strategy B — Longest-processing-time (LPT) packing**
+Sort logical experts by load descending. For each, assign one replica to the
+GPU with the lowest current total load. Repeat until all `num_replicas`
+slots are filled.
+
+**Strategy C — Water-filling**
+Iteratively give one extra replica to the highest-load expert (in
+load-per-replica terms) until all `num_replicas` slots are used. Then pack
+across GPUs by lowest-current-load.
+
+**Strategy D — Two-stage: replicate then pack**
+Stage 1: decide how many replicas each logical expert gets (any monotone
+function of load). Stage 2: pack the resulting `num_replicas` physical
+experts into `num_gpus` groups via greedy LPT or first-fit-decreasing.
+
+**Strategy E — Random + local-improvement**
+Start with a uniform random replica count (rescaled to sum to `num_replicas`,
+floor>=1). Then apply N=200 swap moves: pick the heaviest GPU and the
+lightest, move one replica between them if it reduces max load.
+
+Pick ONE. Stay close to the strategy. Do NOT mix in spectral analysis,
+eigendecomposition, or other heavy machinery — they break.
+
+## Existing Seeds:
+{existing_seeds}
+
+## Self-Check Before Submitting
+Mentally walk through your code with `weight.shape == (10, 64)`,
+`num_replicas == 288`, `num_gpus == 32`. Confirm:
+- [ ] `weight = weight.float()` is the first line of `rebalance_experts`
+- [ ] All three returned tensors have `dtype=torch.int64`
+- [ ] `logcnt.sum(dim=1)` equals 288 for every layer
+- [ ] No `logcnt` value is 0
+- [ ] No `for ... in range(num_replicas + 1)` and no shadowing of
+      `num_replicas`
+- [ ] No imports beyond `torch` + stdlib
+- [ ] No invented APIs (search docs if unsure)
+
+## Output
+Output ONLY the complete Python code in a ```python block. The function MUST
+be runnable end-to-end without modification.
+"""
+
+META_ADVISOR_PROMPT = """You are a lessons-learned advisor for an evolutionary code optimization system.
+
+## Your Role
+Analyze FAILURES from recent evaluations. Your lessons get injected into LLM prompts to help future solutions avoid the same mistakes.
+
+## What You're Given
+- **Failure count**: How many candidates failed (crashes, invalid code, timeouts, etc.)
+- **Error patterns**: Specific error messages encountered (including timeouts)
+- **Previous lessons**: What you warned about last time
+
+## Your Task: Write Concise Lessons (150-200 words max)
+
+### Focus ONLY on Failure Prevention
+You do NOT see successful solutions. Your job is purely defensive:
+1. **Identify error patterns** - What mistakes are being made repeatedly?
+2. **Explain root causes** - Why are these errors happening?
+3. **Give specific fixes** - Exactly how to avoid each error type
+
+### For Each Error Pattern:
+- Quote the error briefly
+- Explain what causes it
+- Give a specific fix
+
+## Output Format
+Keep it SHORT and DIRECT:
+
+**Avoid These Errors:**
+- [Error pattern]: [How to fix]
+- [Error pattern]: [How to fix]
+
+---
+
+{metrics_data}
+
+Provide your lessons (150-200 words max):"""
+
+# --- Workload Loading ---
+_WORKLOADS = None
+
+
+def _repo_fallback_workload_paths() -> list[Path]:
+    """Candidate expert-load.json locations bundled in this repo.
+
+    Mirrors how ``benchmarks/ADRS/eplb`` ships its dataset next to the
+    evaluator, so EPLB runs without cloning ADRS-Leaderboard or setting
+    ``ADRS_EXAMPLE_DATA_ROOT``. The repo root is located by walking up
+    from this file until a ``benchmarks/ADRS`` directory is found.
+    """
+    here = Path(__file__).resolve()
+    candidates: list[Path] = []
+    for parent in here.parents:
+        bench = parent / "benchmarks" / "ADRS" / "eplb" / "evaluator" / "expert-load.json"
+        if bench.exists():
+            candidates.append(bench)
+            break
+    return candidates
+
+
+def _find_workload_path() -> str:
+    """Find the expert-load.json file."""
+    root = os.getenv(ADRS_EXAMPLE_DATA_ROOT_ENV)
+    if root:
+        workload_path = Path(root).expanduser().resolve() / "datasets" / "eplb" / "expert-load.json"
+        if workload_path.exists():
+            return str(workload_path)
+        raise FileNotFoundError(
+            "expert-load.json not found under ADRS_EXAMPLE_DATA_ROOT. "
+            f"Checked: {workload_path}"
+        )
+
+    # No env set: fall back to the dataset bundled in this repo.
+    for path in _repo_fallback_workload_paths():
+        return str(path)
+
+    raise FileNotFoundError(
+        f"{ADRS_EXAMPLE_DATA_ROOT_ENV} is not set and no bundled "
+        "expert-load.json was found under benchmarks/ADRS/eplb/evaluator/. "
+        "Set it to your ADRS-Leaderboard root directory."
+    )
+
+
+def _load_workloads():
+    """Load workloads from JSON file (cached)."""
+    global _WORKLOADS
+    if _WORKLOADS is None:
+        workload_path = _find_workload_path()
+        with open(workload_path, "r") as f:
+            data = json.load(f)
+
+        total_len = len(data['load_history'])
+        workloads = []
+        for i in range(0, total_len, REBALANCE_INTERVAL):
+            start = i
+            end = min(start + REBALANCE_INTERVAL, total_len)
+            load = torch.tensor([x['logical_expert_load'] for x in data['load_history'][start:end]]).sum(dim=0)
+            workloads.append(load)
+
+        _WORKLOADS = workloads
+    return _WORKLOADS
+
+
+def get_inputs():
+    """Return the workloads as inputs for the scoring function."""
+    return _load_workloads()
+
+
+# --- Simulation ---
+def simulate_inference(log2phy, logcnt, workload):
+    """Simulate MoE inference and return balancedness scores."""
+    num_layers, num_logical_experts = workload.shape
+
+    # Initialize physical expert load accumulator
+    num_physical_experts = NUM_REPLICAS
+    total_physical_load = torch.zeros(num_layers, num_physical_experts, dtype=torch.float, device=workload.device)
+
+    # For each logical expert, distribute load to its physical replicas
+    for layer_id in range(num_layers):
+        for logical_id in range(num_logical_experts):
+            logical_load = workload[layer_id][logical_id].item()
+            if logical_load <= 0:
+                continue
+
+            num_replicas = int(logcnt[layer_id][logical_id].item())
+            if num_replicas <= 0:
+                continue
+
+            physical_ids = log2phy[layer_id][logical_id][:num_replicas]
+            replica_load = logical_load / num_replicas
+            total_physical_load[layer_id, physical_ids] += replica_load
+
+    # Calculate balancedness
+    total_load = total_physical_load.sum()
+    if total_load == 0:
+        return 0.0, 0.0
+
+    # Compute expert load
+    expert_layer_avg = total_physical_load.mean(dim=1).sum().item()
+    expert_layer_max = total_physical_load.max(dim=1).values.sum().item()
+    balancedness_expert = expert_layer_avg / expert_layer_max if expert_layer_max > 0 else 0.0
+
+    # Compute GPU load
+    gpu_load = total_physical_load.view(num_layers, NUM_GPUS, -1).sum(dim=2)
+
+    layer_avg = gpu_load.mean(dim=1)
+    layer_max = gpu_load.max(dim=1).values
+
+    avg_load = layer_avg.sum().item()
+    max_load = layer_max.sum().item()
+
+    balancedness_gpu = avg_load / max_load if max_load > 0 else 0.0
+
+    return balancedness_gpu, balancedness_expert
+
+
+# --- Score Function ---
+def score_fn(rebalance_experts, inputs):
+    """
+    Evaluate EPLB algorithm.
+
+    Args:
+        rebalance_experts: The function to evaluate
+        inputs: List of workload tensors
+
+    Returns:
+        dict with 'score' or 'error' key
+    """
+    try:
+        workloads = inputs
+
+        balancedness_scores_gpu = []
+        balancedness_scores_expert = []
+        times_algorithm = []
+
+        for i in range(len(workloads) - 1):
+            start_time = time.perf_counter()
+            phy2log, log2phy, logcnt = rebalance_experts(
+                workloads[i],
+                NUM_REPLICAS,
+                NUM_GROUPS,
+                NUM_NODES,
+                NUM_GPUS,
+            )
+            end_time = time.perf_counter()
+
+            # Validate outputs
+            if phy2log.shape[1] != NUM_REPLICAS:
+                return {"error": f"phy2log shape wrong: {phy2log.shape}"}
+
+            if not torch.all(logcnt.sum(dim=1) == NUM_REPLICAS):
+                sums = logcnt.sum(dim=1)
+                return {"error": f"logcnt sums != {NUM_REPLICAS}: {sums[:5].tolist()}..."}
+
+            # Check for negative replica counts (could bypass sum check)
+            if (logcnt < 0).any():
+                return {"error": "logcnt contains negative values"}
+
+            # Check for unhandled load: experts with load but 0 replicas
+            next_workload = workloads[i + 1]
+            has_load = next_workload > 0
+            has_no_replicas = logcnt == 0
+            unhandled = has_load & has_no_replicas
+            if unhandled.any():
+                unhandled_count = unhandled.sum().item()
+                return {"error": f"Unhandled load: {unhandled_count} experts have load but 0 replicas"}
+
+            balancedness_gpu, balancedness_expert = simulate_inference(
+                log2phy, logcnt, workloads[i + 1]
+            )
+
+            balancedness_scores_gpu.append(balancedness_gpu)
+            balancedness_scores_expert.append(balancedness_expert)
+            times_algorithm.append(end_time - start_time)
+
+        avg_balancedness_gpu = sum(balancedness_scores_gpu) / len(balancedness_scores_gpu)
+        avg_balancedness_expert = sum(balancedness_scores_expert) / len(balancedness_scores_expert)
+        avg_time = sum(times_algorithm) / len(times_algorithm)
+
+        # specevo_baselines scoring (benchmarks/ADRS/eplb/evaluator/evaluator.py):
+        # combined_score = (expert balancedness + uncapped speed_score) / 2.
+        # NOTE: this differs from the SpecEvo-native formula not just in scale
+        # but in substance — it scores EXPERT balancedness (not GPU), has no
+        # speed cap and no slow penalty.
+        speed_score = 0.002 / avg_time if avg_time > 0 else 0.0
+        score = (avg_balancedness_expert + speed_score) / 2
+
+        # Retained for the per-config behaviour metrics reported below.
+        balancedness_score = avg_balancedness_gpu * 90
+
+        # Per-workload behavioral dimensions (W8, W9 least correlated; W1-W7 cluster)
+        workload_0 = balancedness_scores_gpu[0] if len(balancedness_scores_gpu) > 0 else 0.0
+        workload_8 = balancedness_scores_gpu[8] if len(balancedness_scores_gpu) > 8 else 0.0
+        workload_9 = balancedness_scores_gpu[9] if len(balancedness_scores_gpu) > 9 else 0.0
+        main_cluster = balancedness_scores_gpu[1:8] if len(balancedness_scores_gpu) > 7 else []
+        workload_main = sum(main_cluster) / len(main_cluster) if main_cluster else 0.0
+
+        return {
+            "score": score,
+            "balancedness_gpu": avg_balancedness_gpu,
+            "balancedness_expert": avg_balancedness_expert,
+            "avg_time": avg_time,
+            "execution_time": avg_time,
+            "balancedness_score": balancedness_score,
+            "speed_score": speed_score,
+            "workload_0": workload_0,
+            "workload_8": workload_8,
+            "workload_9": workload_9,
+            "workload_main": workload_main,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# --- Test Inputs (lazy loaded) ---
+INPUTS = None
+
+
+def get_lazy_inputs():
+    """Get inputs, loading them lazily on first access."""
+    global INPUTS
+    if INPUTS is None:
+        INPUTS = get_inputs()
+    return INPUTS

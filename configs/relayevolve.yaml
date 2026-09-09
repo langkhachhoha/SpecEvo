@@ -1,0 +1,106 @@
+# RelayEvolve — adaptive population handoff on the OpenEvolve backend
+#
+# A cheap model explores several trajectories in short blocks scheduled by a
+# Grow-Deepen bandit; Relay Gain (the marginal improvement of a compact,
+# quality-diverse candidate bank) is both the bandit's reward and the handoff
+# trigger; the curated seed set then initialises one shared strong-model
+# population for refinement.
+#
+# The usual entry point is the driver, which wires the two model tiers and the
+# budget for you:
+#
+#   python scripts/run_relay.py --method relayevolve \
+#       --benchmark-dir benchmarks/math/circle_packing \
+#       --iterations 300 --dollars 2 --workers 8 --seed 1
+#
+# This file documents the same knobs for `specevo-baselines-run -c ...`, where the
+# cheap model is `llm.models` and the strong model is `llm.guide_models`.
+
+max_iterations: 300
+checkpoint_interval: 10
+log_level: "INFO"
+
+# Generations in flight at once. This is what makes the run fast: while one
+# candidate is being evaluated, others are being generated.
+max_parallel_iterations: 8
+
+llm:
+  api_base: "https://openrouter.ai/api/v1"
+  # Cheap model — the exploration phase and every "cheap" routing decision.
+  models:
+    - name: "openrouter/qwen/qwen3-30b-a3b-instruct-2507"
+      weight: 1.0
+  # Strong model — the refinement phase and every "strong" routing decision.
+  guide_models:
+    - name: "openrouter/moonshotai/kimi-k2"
+      weight: 1.0
+  temperature: 0.7
+  max_tokens: 32000
+  timeout: 600
+
+search:
+  type: "relayevolve"        # or relay_all_cheap / relay_all_strong /
+                             # relay_fixed_switch / relay_random / relay_bandit
+  num_context_programs: 5
+  database:
+    # --- population (unchanged OpenEvolve; identical for every method) ------
+    num_islands: 5
+    population_size: 40
+    archive_size: 100
+    exploration_ratio: 0.2
+    exploitation_ratio: 0.7
+    elite_selection_ratio: 0.1
+    feature_dimensions: ["complexity", "diversity"]
+    feature_bins: 10
+    migration_interval: 10
+    migration_rate: 0.1
+    random_seed: 1
+
+    # --- budget split ------------------------------------------------------
+    strong_reserve: 0.85         # share of the dollar budget kept for refinement
+
+    # --- Grow/Deepen block scheduling --------------------------------------
+    block_size: 5                # h: generations per block
+    max_trajectories: 5
+    trajectory_horizon: 6        # blocks per trajectory
+    init_grow_blocks: 2          # warm-up Grows kept out of the bandit history
+    cheap_max_iteration_frac: 0.5
+    ucb_c: 0.5
+    ucb_window: 8
+
+    # --- relay objective F_C(S) = λ Q_r(S) + (1-λ) D^q_C(S) -----------------
+    bank_size: 8                 # k: bank size and handoff seed count
+    quality_top_r: 3             # r
+    relay_lambda: 0.5            # λ
+    code_view_eta: 0.7           # η: code vs metadata view in sim(x, x')
+    epsilon_f: 0.001
+
+    # --- adaptive handoff --------------------------------------------------
+    epsilon_rel: 0.02            # saturation threshold on relative Relay Gain
+    patience: 3                  # consecutive low-gain blocks before handing off
+
+    # --- candidate embeddings ----------------------------------------------
+    # "hash" is local, deterministic and free, so re-scoring the bank after
+    # every block costs nothing against the run's dollar budget. "api" uses an
+    # OpenAI-compatible /embeddings endpoint and falls back to "hash" on error.
+    embedding_backend: "hash"
+    embedding_dim: 512
+
+    # --- routing baselines -------------------------------------------------
+    switch_fraction: 0.5         # Fixed-switch handover point
+    p_strong: 0.5                # Random: P(strong) per generation
+
+evaluator:
+  timeout: 150
+  max_retries: 3
+  cascade_evaluation: false
+
+prompt:
+  system_message: |
+    <REPLACE WITH YOUR PROBLEM-SPECIFIC SYSTEM MESSAGE>
+
+diff_based_generation: false
+max_solution_length: 60000
+
+monitor:
+  enabled: false
