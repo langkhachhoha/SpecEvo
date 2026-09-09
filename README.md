@@ -145,6 +145,24 @@ Some benchmarks need extra Python packages; install them per suite:
 python scripts/install_benchmark_requirements.py
 ```
 
+### 4. Verify the checkout
+
+Import-checks all 176 tasks and makes no API calls — the fastest way to confirm
+setup is complete:
+
+```bash
+python scripts/check_tasks.py
+```
+
+```
+  Mathematical discovery             7 /   7
+  Systems optimization (ADRS)        4 /   4
+  CO-Bench                          36 /  36
+  LSR-Synth                        129 / 129
+
+  TOTAL                            176 / 176
+```
+
 ---
 
 ## ⚡ Quickstart
@@ -561,6 +579,8 @@ SpecEvo/
 │   ├── run_relay.py            RelayEvolve + the 4 allocation controls
 │   ├── reproduce/              one script per benchmark suite
 │   ├── download_benchmark_data.sh
+│   ├── check_tasks.py          import-check all 176 tasks (no API calls)
+│   ├── test_openrouter_key.py  verify the API key
 │   └── lsr_*.py                LSR-Synth result aggregation
 │
 ├── best_programs/              highest-scoring programs per method (paper appendix)
@@ -573,7 +593,9 @@ SpecEvo/
 ```bash
 pytest tests/                   # 607 tests, ~5 min, no API calls
 pytest tests/specevo -q         # SpecEvo engine only
-pytest tests/ -m "not slow"     # skip the slow ones
+pytest tests/ -m "not slow"     # skip the slow ones (some are timing-sensitive
+                                # and can fail on a heavily loaded machine)
+python scripts/check_tasks.py   # all 176 tasks import and expose the contract
 ```
 
 Two optional scripts do make live API calls:
