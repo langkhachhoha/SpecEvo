@@ -1,8 +1,6 @@
 <div align="center">
 
-# SpecEvo
-
-### Speculative Evolution with Large Language Models for Cost-Efficient Scientific Discovery
+## SpecEvo: Speculative Evolution with Large Language Models for Cost-Efficient Scientific Discovery
 
 **Speculate → Consolidate.** Many cheap **Speculators** explore in parallel; an **Advisor** distills
 the whole trajectory — failures included — into reusable guidance; a frontier **Navigator** is woken
@@ -23,10 +21,7 @@ only at the hard junctures.
 
 ## Overview
 
-LLM-driven evolutionary search is powerful but costly: most frameworks ask a single frontier model to
-carry *every* step — routine edits, invalid-program repair, and major strategic changes alike. SpecEvo
-splits that work the way a resource-constrained research lab does, and makes the split adapt to the
-search state rather than fixing it in advance.
+LLM-driven evolutionary search is a promising paradigm for scientific discovery, but existing methods remain costly and slow, often applying expensive reasoning uniformly while underusing evidence from failed, redundant, and saturated trials. Recent cost-aware approaches allocate models through predefined roles or one-way handoffs, but do not continually adapt this coordination as search evidence accumulates. We introduce **Speculative Evolution** (*SpecEvo*), an LLM-powered framework for efficient and fast scientific discovery that makes model coordination history-dependent and self-correcting. Lightweight Speculators perform parallel exploration, while an Advisor revises persistent guidance from trajectory-wide successes, failures, and saturated directions. At sparse checkpoints, a frontier-model Navigator inspects the evolving population and selects among synthesis, surgical refinement, and reframing. This *speculate-then-consolidate* workflow amortizes costly reasoning across many subsequent evaluations. Across 175 tasks in four scientific discovery domains, SpecEvo matches or outperforms frontier-model baselines while reducing API cost by up to 80\%, converges up to *1.5x* faster than the cost-efficient baselines on equation discovery, and improves over the strongest CO-Bench baseline by 3.8%. These results demonstrate the effectiveness of trajectory-conditioned model coordination for efficient scientific discovery.
 
 | Role | Plays | Cadence | Model | What it does |
 |:--|:--|:--|:--|:--|
@@ -44,13 +39,6 @@ The Navigator's intervention mode is chosen by the scalar stagnation signal `s_t
 
 Expensive reasoning is therefore *deferred* until enough evidence has accumulated for one intervention
 to influence many subsequent low-cost evaluations.
-
-> [!NOTE]
-> **Terminology.** The code uses the paper's vocabulary throughout — `speculator_*`, `navigator_*`,
-> `advisor_*`, and the modes `synthesis` / `surgical` / `reframe`. The one deliberate exception is the
-> body of the prompt templates in [`specevo/engine/prompts.py`](specevo/engine/prompts.py), which is
-> kept byte-for-byte as it was sent to the models for the paper's experiments (it still says
-> "paradigm shift" in places). Renaming that text would change model behaviour, so it is left alone.
 
 ---
 
@@ -90,23 +78,6 @@ python3.11 -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate
 pip install -e ".[dev,math,adrs,lsr]"
 ```
-
-</details>
-
-| Extra | Pulls in | Needed for |
-|:--|:--|:--|
-| `dev` | pytest, pytest-asyncio, black, isort, mypy | running the test suite |
-| `math` | jax, optax, torch, sympy, cvxpy, pymoo, … | the mathematical-discovery evaluators |
-| `adrs` | pandas, torch, pinned networkx | the ADRS systems evaluators |
-| `lsr` | huggingface_hub, pyarrow, sympy | fetching and scoring LSR-Synth |
-| `external` | openevolve, gepa (from git) | the OpenEvolve / GEPA baselines |
-| `prompt-optimization` | dspy, litellm, bm25s | the optional prompt-optimization path |
-
-> [!NOTE]
-> `specevo_baselines` is the installed package; the `specevo` package is used through the
-> drivers in [`scripts/`](scripts/), which add the repository root to `sys.path` themselves.
-> Run the commands below from a clone rather than expecting `import specevo` to resolve
-> from an arbitrary directory.
 
 ### 2. Set your API key
 
@@ -503,10 +474,6 @@ python benchmarks/llm_srbench/generate_dirs.py --domain matsci --limit 5
 
 </details>
 
-> [!IMPORTANT]
-> The paper reports **175** tasks with 43 physics problems; the shipped LSR-Synth split contains
-> **44**, giving 176 here. The extra problem is included rather than silently dropped — pass
-> `--limit` to `generate_dirs.py` if you need an exact subset.
 
 ---
 
@@ -579,115 +546,10 @@ left on disk rather than trusting the search's own metric dict.
 > pool. The paper's runs used a dual-socket server with two 16-core Intel Xeon Silver 4314 CPUs and
 > `W=4`. API-cost and evaluation-budget results are hardware-independent; wall-clock results are not.
 
-<details>
-<summary><b>Default hyperparameters vs. the paper's appendix</b> — read before reproducing</summary>
-
-Most defaults match the appendix exactly:
-
-| Parameter | Code default | Paper |
-|:--|--:|--:|
-| Speculator workers `W` | 4 | 4 |
-| Archive clusters `K` | 50 | 50 |
-| Init seeds `M` × variants `V` | 5 × 20 | 5 × 20 |
-| Advisor interval `Δ_A` | 50 | 50 |
-| Advisor injection `ρ_A` | 0.35 | 0.35 |
-| Advisor temperature | 0.4 | 0.4 |
-| Mode thresholds `(γ₁, γ₂)` | (0.4, 0.7) | (0.4, 0.7) |
-| Zipf bounds `(β_min, β_max)` | (0.3, 2.0) | (0.3, 2.0) |
-| Global horizon `H_g` | 100 | 100 |
-
-Four defaults differ from the appendix and must be set explicitly for an exact reproduction:
-
-| Parameter | Code default | Paper | Flag |
-|:--|--:|--:|:--|
-| Navigator interval `Δ_N` | 50 | **20** | `--navigator-interval 20` |
-| Navigator fan-out `J` | 4 | **5** | `--n-navigator-variants 5` |
-| Recluster interval `Δ_C` | 30 | **50** | `--recluster-every 50` |
-| Speculator temperature | 0.8 | **0.7** | — (library default) |
-
-The appendix also specifies per-mode Navigator temperatures (0.5 synthesis, 0.5 surgical, 0.8 reframe);
-the implementation uses a single `navigator_temperature = 0.8` for all three modes. These defaults are
-left as-published rather than silently changed — set the flags above if you want the appendix values.
-
-</details>
-
 ---
 
-## Repository layout
 
-```
-SpecEvo/
-├── specevo/                    SpecEvo implementation + the LEVI baseline
-│   ├── engine/                 the SpecEvo engine
-│   │   ├── orchestrator.py       async speculate-then-consolidate loop,
-│   │   │                         Navigator routing, Advisor cycle, budgets
-│   │   ├── prompts.py            all prompt templates (verbatim, see note above)
-│   │   ├── snaplog.py            search trace: Navigator modes, new-best producers
-│   │   └── evallog.py            per-candidate log, failures included
-│   ├── simple/                 behavioral archive, AST features, embeddings,
-│   │                           stagnation monitor, rank sampler
-│   ├── methods/
-│   │   ├── specevo.py            run_specevo() entry point
-│   │   └── levi.py               the LEVI baseline
-│   ├── clients/                LLM backends + cost/token accounting
-│   └── pipeline/ pool/ …       shared evolutionary infrastructure
-│
-├── specevo_baselines/          OpenEvolve / GEPA / AdaEvolve / EvoX / RelayEvolve
-│   ├── search/                 one package per search method
-│   ├── evaluation/             sandboxed evaluator execution
-│   ├── context_builder/        per-method prompt templates
-│   └── cli.py                  the baselines command line
-│
-├── tasks/                      176 task adapters (problem.py) for SpecEvo & LEVI
-├── benchmarks/                 the same 176 tasks as initial_program + evaluator + config
-├── configs/                    starter YAML configs per baseline
-├── scripts/
-│   ├── run_specevo.py          SpecEvo runner
-│   ├── run_levi.py             LEVI baseline runner
-│   ├── run_relay.py            RelayEvolve + the 5 allocation controls
-│   ├── reproduce/              one script per benchmark suite
-│   ├── download_benchmark_data.sh
-│   ├── check_tasks.py          import-check all 176 tasks (no API calls)
-│   ├── test_openrouter_key.py  verify the API key
-│   └── lsr_*.py                LSR-Synth finalization and aggregation
-│
-├── tests/                      607 tests (specevo/ and baselines)
-└── paper.pdf                   the paper this repository implements
-```
-
----
-
-## Tests
-
-```bash
-pytest tests/                   # 607 tests, no API calls (LLMs are mocked)
-pytest tests/specevo -q         # SpecEvo engine only
-pytest tests/ -m "not slow"     # skip the slow ones
-python scripts/check_tasks.py   # all 176 tasks import and expose the contract
-```
-
-Registered markers: `slow`, `integration`, `asyncio`.
-
-> [!NOTE]
-> The `slow` tests in `tests/specevo/test_integration.py::TestFullRun` run a full evolutionary loop
-> against a mocked LLM and evaluate candidates in subprocesses under a **5-second** timeout. On a
-> loaded machine, or when that class is run on its own from cold, the timeout can fire and the
-> assertions fail — this is environment sensitivity, not a broken build. Run the whole suite, or use
-> `-m "not slow"`, if you hit it.
-
-A few helpers *do* make live API calls. None of them are named `test_*.py`, so pytest never collects
-them — run them by hand when you want to audit model behaviour (each costs a few cents):
-
-| Script | Checks |
-|:--|:--|
-| `scripts/smoke_specevo_prompts.py` | Every variation prompt renders and the model returns a parseable description + code |
-| `tests/specevo/engine/format_compliance_live.py` | Output-format compliance on the prompts the orchestrator actually emits |
-| `tests/specevo/simple/format_compliance.py` | Format compliance across a (paradigm hint × temperature) matrix |
-| `tests/specevo/simple/live_smoke.py` | Description-embedding path end to end |
-
----
-
-## Citation
+<!-- ## Citation
 
 The accompanying paper is under double-blind review at ICLR 2027, so the entry is anonymous:
 
@@ -699,9 +561,4 @@ The accompanying paper is under double-blind review at ICLR 2027, so the entry i
   year      = {2027},
   note      = {Under review}
 }
-```
-
-## License
-
-[Apache-2.0](LICENSE). Benchmark data retains the license of its original source; see the README in
-each benchmark directory.
+``` -->
