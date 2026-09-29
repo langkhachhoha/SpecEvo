@@ -58,7 +58,9 @@ class GEPANativeDatabase(ProgramDatabase):
         )
         self.epsilon: float = getattr(config, "epsilon", 0.1)
         max_rejection_history: int = getattr(config, "max_rejection_history", 20)
-        seed: int = getattr(config, "random_seed", 42) or 42
+        seed = getattr(config, "random_seed", 42)
+        if seed is None:
+            seed = 42
 
         self.elite_pool: List[str] = []  # program IDs sorted by score desc
         self.rejection_history: collections.deque = collections.deque(maxlen=max_rejection_history)

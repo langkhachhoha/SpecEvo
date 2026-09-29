@@ -661,6 +661,7 @@ class Config:
 
     # General settings
     max_iterations: int = 100
+    random_seed: Optional[int] = None
     checkpoint_interval: int = 10
     log_level: str = "INFO"
     log_dir: Optional[str] = None
@@ -828,6 +829,7 @@ class Config:
         return {
             # General settings
             "max_iterations": self.max_iterations,
+            "random_seed": self.random_seed,
             "checkpoint_interval": self.checkpoint_interval,
             "log_level": self.log_level,
             "log_dir": self.log_dir,

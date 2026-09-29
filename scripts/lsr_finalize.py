@@ -306,6 +306,8 @@ def main() -> int:
     ap.add_argument("--seed", default="1")
     ap.add_argument("--run-dir", required=True)
     ap.add_argument("--results", required=True, help="results.jsonl to append to")
+    ap.add_argument("--allow-failed-program", action="store_true",
+                    help="Exit successfully after recording an invalid or missing program.")
     ap.add_argument("--iterations", type=int, default=None)
     args = ap.parse_args()
 
@@ -342,7 +344,7 @@ def main() -> int:
             f"{record['status']} — {record.get('error') or fin.get('error')}",
             file=sys.stderr,
         )
-    return 0 if ok else 1
+    return 0 if ok or args.allow_failed_program else 1
 
 
 if __name__ == "__main__":

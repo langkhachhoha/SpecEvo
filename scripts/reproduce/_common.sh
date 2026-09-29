@@ -5,8 +5,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-PY="${PY:-python}"
-[[ -x "$REPO_ROOT/.venv/bin/python" ]] && PY="${PY_OVERRIDE:-$REPO_ROOT/.venv/bin/python}"
+if [[ -n "${PY_OVERRIDE:-}" ]]; then
+    PY="$PY_OVERRIDE"
+elif [[ -z "${PY:-}" ]]; then
+    PY=python
+    [[ ! -x "$REPO_ROOT/.venv/bin/python" ]] || PY="$REPO_ROOT/.venv/bin/python"
+fi
 
 METHOD="${METHOD:-specevo}"
 SPECULATOR_MODEL="${SPECULATOR_MODEL:-openrouter/qwen/qwen3-30b-a3b-instruct-2507}"
@@ -18,8 +22,8 @@ WORKERS="${WORKERS:-4}"
 SEED="${SEED:-1}"
 OUT="${OUT:-outputs/repro}"
 
-if [[ ! -f "$REPO_ROOT/.env" ]]; then
-    echo "ERROR: .env not found. Copy .env.example and set OPENAI_API_KEY to your OpenRouter key." >&2
+if [[ ! -f "$REPO_ROOT/.env" && -z "${OPENROUTER_API_KEY:-}${OPENAI_API_KEY:-}${API_KEY:-}" ]]; then
+    echo "ERROR: Configure .env (see .env.example), or export your provider API key." >&2
     exit 2
 fi
 
@@ -47,7 +51,7 @@ run_task() {
         --task-dir "$task_dir" \
         "${model_flags[@]}" \
         --evals "$EVALS" --dollars "$DOLLARS" --seconds "$SECONDS_CAP" \
-        --workers "$WORKERS" \
+        --workers "$WORKERS" --seed "$SEED" \
         --output-dir "$out" 2>&1 | tee "$out/run.log"
 }
 
@@ -57,6 +61,11 @@ run_baseline() {
     local out="$OUT/$METHOD/$name/seed$SEED"
     mkdir -p "$out"
     echo "== $METHOD :: $name =="
+    case "$METHOD" in
+        openevolve|shinkaevolve|gepa)
+            echo "ERROR: reproduction scripts require a native method to honor budgets; use the external backend directly." >&2
+            return 2 ;;
+    esac
     local cfg="$bench_dir/config.yaml"
     [[ -f "$bench_dir/config_${METHOD}.yaml" ]] && cfg="$bench_dir/config_${METHOD}.yaml"
 
@@ -71,10 +80,16 @@ run_baseline() {
         echo "No evaluator found under $bench_dir" >&2; return 2
     fi
 
+    local model_flags=(-m "$NAVIGATOR_MODEL")
+    case "$METHOD" in
+        relayevolve|relay_*)
+            model_flags=(-m "$SPECULATOR_MODEL" --guide-model "$NAVIGATOR_MODEL") ;;
+    esac
     "$PY" -m specevo_baselines.cli \
         "$bench_dir/initial_program.py" "$evaluator" \
-        -c "$cfg" -s "$METHOD" -m "$NAVIGATOR_MODEL" \
-        -i "$EVALS" --dollars "$DOLLARS" \
+        -c "$cfg" -s "$METHOD" "${model_flags[@]}" \
+        -i "$EVALS" --dollars "$DOLLARS" --seconds "$SECONDS_CAP" \
+        --workers "$WORKERS" --seed "$SEED" \
         -o "$out" 2>&1 | tee "$out/run.log"
 }
 

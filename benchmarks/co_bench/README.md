@@ -1,16 +1,16 @@
 # CO-Bench in SpecEvo Baselines
 
 This directory integrates [**CO-Bench**](https://github.com/sunnweiwei/CO-Bench)
-(Sun et al., 2025 — *Benchmarking Language Model Agents in Algorithm Search for
+(*Benchmarking Language Model Agents in Algorithm Search for
 Combinatorial Optimization*) into SpecEvo Baselines so that CO-Bench problems can be
 run by **both** discovery paths in this repo:
 
 - the **baselines** (`openevolve_native`, `gepa_native`, `adaevolve`, `evox`)
-  via `.github/workflows/baseline.yml` / `specevo-baselines-run`; and
-- **SpecEvo / SpecEvo** via `.github/workflows/specevo.yml` / `scripts/run_specevo.py`.
+  via `python -m specevo_baselines.cli`; and
+- **SpecEvo and LEVI** via `scripts/run_specevo.py` and `scripts/run_levi.py`.
 
 The evaluation protocol follows the paper: each problem instance is solved under
-a **hard 10-second per-instance time limit**, the raw objective is **normalized
+a **10-second per-instance time limit**, the raw objective is **normalized
 against the best-known solution** (score `1.0` = best-known / optimal, higher is
 better), and any program error, constraint violation, or timeout scores **0.0**
 for that instance.
@@ -82,7 +82,7 @@ benchmarks/co_bench/
     └── requirements.txt
 
 tasks/co_bench/<slug>/
-└── problem.py               # SpecEvo/SpecEvo task: PROBLEM_DESCRIPTION, FUNCTION_SIGNATURE, SEED_PROGRAM, score_fn
+└── problem.py               # SpecEvo/LEVI task: PROBLEM_DESCRIPTION, FUNCTION_SIGNATURE, SEED_PROGRAM, score_fn
 ```
 
 Both paths import the single engine `cobench_eval.py`, so a candidate `solve`
@@ -92,18 +92,14 @@ gets scored **identically** whether it is discovered by a baseline or by SpecEvo
 
 Beyond `numpy`, CO-Bench needs `scipy` (the `assignment` seed uses
 `scipy.optimize.linear_sum_assignment`) and `networkx` (the `mis` task loads
-networkx `.gpickle` graphs). These are wired for **both** workflows:
+networkx `.gpickle` graphs). Both are core dependencies installed with:
 
-- **baseline.yml** runs `uv sync` (both are in the root `pyproject.toml` core
-  deps) **and** installs each task's `requirements.txt`
-  (`assignment` → `scipy`, `mis` → `networkx`).
-- The SpecEvo and LEVI runners share the repo-root dependency set, whose core deps now
-  include `scipy` + `networkx`, so the spawned (daemon) eval workers import them
-  cleanly.
+```bash
+python -m pip install -e .
+```
 
-Both execution paths are verified end-to-end: the baseline evaluator (fork
-subprocess) and the SpecEvo worker (spawn + daemon → in-process `SIGALRM`) produce
-identical scores on every task.
+For task-specific dependencies, inspect the task's `requirements.txt`, or use
+`python scripts/install_benchmark_requirements.py benchmarks/co_bench/<slug>`.
 
 ### How the engine works (`cobench_eval.py`)
 
@@ -114,9 +110,10 @@ identical scores on every task.
   (one at a time). Non-daemon callers (the baseline evaluator) run each instance
   in a **forked subprocess** and hard-kill it at the limit; daemon callers (SpecEvo
   workers, which may not spawn child processes) run each instance in-process under
-  **`SIGALRM`**. Both enforce the same 10s per-instance limit; a runaway `solve`
-  scores 0 and never hangs the search. (Note: with sequential evaluation a
-  *valid-but-slow* candidate costs up to `instances × timeout`.)
+  **`SIGALRM`**. A daemon caller outside the main thread uses a soft thread
+  timeout that cannot terminate the candidate thread. Timed-out instances score
+  zero. With sequential evaluation, a slow candidate can consume up to
+  `instances × timeout` in the normal process/signal paths.
 - Applies the task's `norm_score` (normalize vs. best-known), then splits the
   evaluated instances into a **dev** set (the search signal) and a **disjoint
   test** set (held out). The split is deterministic: flatten every instance in
@@ -141,8 +138,10 @@ identical scores on every task.
 (TSP has only 2 files ⇒ 6). Each iteration is usually **dominated by the LLM
 call**; evaluation is fast when solves finish or fail quickly, but since
 instances run **sequentially**, a *valid-but-slow* candidate can cost up to
-`instances × 10s`. To run the **full CO-Bench test set** (faithful to the paper,
-slower), set `COBENCH_MAX_CASES=0` and `COBENCH_MAX_INSTANCES=0`.
+`instances × 10s`. Set `COBENCH_MAX_CASES=0` and
+`COBENCH_MAX_INSTANCES=0` to evaluate all **locally available** instances.
+For tasks with bundled subsets, obtain the remaining upstream data before
+comparing against a run that used the complete dataset.
 
 ## Running locally
 
@@ -159,88 +158,82 @@ export COBENCH_MAX_CASES=1 COBENCH_MAX_INSTANCES=2   # quick smoke; unset for de
 ### Baselines
 
 ```bash
-specevo-baselines-run \
+python -m specevo_baselines.cli \
   benchmarks/co_bench/tsp/initial_program.py \
   benchmarks/co_bench/tsp/evaluator.py \
   --config benchmarks/co_bench/tsp/config.yaml \
   --search openevolve_native \
   --model openrouter/openai/gpt-5 \
-  --iterations 100 \
+  --iterations 100 --dollars 1 \
   --output outputs/cobench/tsp
 ```
 
 Swap `tsp` for any slug and `--search` for any of
 `openevolve_native | gepa_native | adaevolve | evox`.
 
-### SpecEvo / SpecEvo
+### SpecEvo
 
 ```bash
 python scripts/run_specevo.py \
-  --example-dir tasks/co_bench/tsp \
-  --mutation-model openrouter/qwen/qwen3-30b-a3b-instruct-2507 \
-  --paradigm-model openrouter/openai/gpt-5 \
-  --evals 64 \
+  --task-dir tasks/co_bench/tsp \
+  --speculator-model openrouter/qwen/qwen3-30b-a3b-instruct-2507 \
+  --navigator-model openrouter/openai/gpt-5 \
+  --n-diverse-seeds 2 --n-variants-per-seed 2 \
+  --evals 64 --dollars 1 \
   --output-dir outputs/specevo/cobench_tsp
 ```
 
-## Running via GitHub Actions
-
-Both workflows accept CO-Bench directly — no code changes needed:
-
-- **Baselines** (`Baselines Smoke`): set `benchmark_dir` to
-  `benchmarks/co_bench/<slug>` and pick a `baseline`.
-- **SpecEvo** (`SpecEvo`): set `benchmark` to `tasks/co_bench/<slug>`.
-
-Both expose `cobench_timeout`, `cobench_max_cases`, `cobench_max_instances`
-inputs (they map to the env vars above; blank = the defaults). They are ignored
-by non-CO-Bench benchmarks.
+These runs make paid model calls. See the
+[reproduction guide](../../docs/REPRODUCING.md) for suite-level runs and the
+[baseline guide](../../docs/BASELINES.md) for LEVI and other search methods.
 
 ## Seed sanity check (no LLM)
 
-Each problem ships a simple but **feasible** seed `solve` (Hungarian for the
+Each problem ships a seed `solve` (Hungarian for the
 assignment problem, greedy min-degree for MIS, nearest-neighbour for TSP,
 first-fit for bin packing, greedy set-cover, …) — the starting point the search
-improves on. Approximate seed dev scores (default sample, higher = closer to
-best-known; 1.0 = optimal):
+improves on. Some seeds are infeasible on some instances. The table lists their
+strategies; use the evaluation command below to measure scores for your local
+instance selection.
 
-| Problem | Seed dev | Seed strategy |
-|---------|:--:|-------|
-| assignment               | ~1.00 | Hungarian (scipy) — optimal |
-| packing_circles          | ~1.00 | greedy grid placement, prefix order |
-| bin_packing_1d           | ~0.99 | first-fit decreasing |
-| pmedian_uncap            | ~0.99 | greedy facility-location (numpy) |
-| mkp                      | ~0.96 | profit/consumption ratio greedy |
-| corporate_structuring    | ~0.94 | star tree of profitable countries |
-| packing_circles_area     | ~0.94 | greedy grid, largest-first |
-| hybrid_reentrant         | ~0.94 | best of a few server permutations |
-| packing_rectangles_area  | ~0.95 | greedy AABB grid, largest-area-first |
-| packing_rectangles       | ~0.93 | greedy AABB grid, smallest-first |
-| warehouse_location_uncap | ~0.90 | assign each customer to cheapest warehouse |
-| set_covering             | ~0.90 | greedy cost/coverage set cover |
-| gap                      | ~0.86 | least-consumption + overflow repair |
-| flow_shop                | ~0.82 | identity permutation |
-| aircraft_landing         | ~0.81 | greedy runway packing near target time |
-| mis                      | ~0.81 | greedy minimum-degree independent set |
-| tsp                      | ~0.80 | nearest-neighbour |
-| unconstrained_guillotine | ~0.78 | shelf (next-fit) packing |
-| common_due_date          | ~0.77 | best of identity / SPT / LPT / V-shape |
-| rcsp                     | ~0.77 | resource-bounded label-setting shortest path |
-| graph_coloring           | ~0.75 | greedy largest-first |
-| job_shop                 | ~0.64 | list scheduling (job order) |
-| warehouse_location_cap   | ~0.63 | open cheapest warehouses + greedy split assign |
-| pmedian_cap              | ~0.63 | farthest-first medians + capacity-aware assign |
-| mdmkp                    | ~0.61 | greedy demand-satisfaction then profit fill |
-| open_shop                | ~0.60 | list scheduling |
-| set_partitioning         | ~0.59 | greedy non-overlapping exact cover (~0.7 valid) |
-| period_vrp               | ~0.52 | balanced schedule choice + capacity bin-packing |
-| container_loading        | ~0.45 | best single box type, uniform 3D grid |
-| container_loading_weight | ~0.45 | best single box type, load-aware column stacking |
-| constrained_guillotine   | ~0.43 | uniform single-piece guillotine grid |
-| crew_scheduling          | ~0.29 | greedy arc-chaining (~0.43 valid — hard feasibility) |
-| equitable_partitioning   | ~0.27 | balanced greedy 8-way split (perfect instances hard) |
-| assortment               | ~0.19 | smallest-fitting stock + shelf packing |
-| steiner                  | ~0.11 | no Steiner points (MST baseline) |
-| non_guillotine_cutting   | 0.00  | places nothing — genuinely hard feasibility, for the search to crack |
+| Problem | Seed strategy |
+|---------|-------|
+| assignment               | Hungarian (scipy) — optimal |
+| packing_circles          | greedy grid placement, prefix order |
+| bin_packing_1d           | first-fit decreasing |
+| pmedian_uncap            | greedy facility-location (numpy) |
+| mkp                      | profit/consumption ratio greedy |
+| corporate_structuring    | star tree of profitable countries |
+| packing_circles_area     | greedy grid, largest-first |
+| hybrid_reentrant         | best of a few server permutations |
+| packing_rectangles_area  | greedy AABB grid, largest-area-first |
+| packing_rectangles       | greedy AABB grid, smallest-first |
+| warehouse_location_uncap | assign each customer to cheapest warehouse |
+| set_covering             | greedy cost/coverage set cover |
+| gap                      | least-consumption + overflow repair |
+| flow_shop                | identity permutation |
+| aircraft_landing         | greedy runway packing near target time |
+| mis                      | greedy minimum-degree independent set |
+| tsp                      | nearest-neighbour |
+| unconstrained_guillotine | shelf (next-fit) packing |
+| common_due_date          | best of identity / SPT / LPT / V-shape |
+| rcsp                     | resource-bounded label-setting shortest path |
+| graph_coloring           | greedy largest-first |
+| job_shop                 | list scheduling (job order) |
+| warehouse_location_cap   | open cheapest warehouses + greedy split assign |
+| pmedian_cap              | farthest-first medians + capacity-aware assign |
+| mdmkp                    | greedy demand-satisfaction then profit fill |
+| open_shop                | list scheduling |
+| set_partitioning         | greedy non-overlapping exact cover (may be infeasible) |
+| period_vrp               | balanced schedule choice + capacity bin-packing |
+| container_loading        | best single box type, uniform 3D grid |
+| container_loading_weight | best single box type, load-aware column stacking |
+| constrained_guillotine   | uniform single-piece guillotine grid |
+| crew_scheduling          | greedy arc-chaining (may be infeasible) |
+| equitable_partitioning   | balanced greedy 8-way split (perfect instances hard) |
+| assortment               | smallest-fitting stock + shelf packing |
+| steiner                  | no Steiner points (MST baseline) |
+| non_guillotine_cutting   | places nothing — requires the search to construct a feasible solution |
 
 (`assignment` needs **scipy**; `mis` needs **networkx** — both declared in the
 task's `requirements.txt`.) Reproduce:

@@ -27,4 +27,4 @@ python scripts/run_specevo.py --task-dir tasks/heilbronn_convex_13 --evals 500 -
 
 Models default to the paper's split — `--speculator-model` (Qwen3-30B),
 `--navigator-model` (GPT-5), `--embedding-model`. See the root
-[README](../../README.md#-running-specevo) for the full flag reference.
+[documentation](../../docs/RUNNING.md) for the full flag reference.

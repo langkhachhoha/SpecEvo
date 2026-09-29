@@ -92,6 +92,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--target-score", default="", help="Stop early at this score (default: unset).")
 
     # Concurrency
+    p.add_argument("--seed", type=int, default=0, help="Local search random seed (default: 0).")
     p.add_argument("--workers", default="4", help="Concurrent LLM workers (default: 4).")
     p.add_argument("--eval-processes", default="4", help="Concurrent evaluator processes (default: 4).")
     p.add_argument("--eval-timeout", default="600", help="Per-candidate evaluation timeout in seconds.")
@@ -328,6 +329,9 @@ def main() -> int:
     args = _parse_args()
     _load_repo_env()
     _ensure_openrouter_env()
+    import numpy as np
+
+    np.random.seed(args.seed % (2**32))
 
     task_dir = (REPO_ROOT / args.task_dir).resolve() if not Path(args.task_dir).is_absolute() else Path(args.task_dir)
     if not task_dir.is_dir():
@@ -485,6 +489,7 @@ def main() -> int:
         budget_dollars=dollars,
         budget_seconds=seconds,
         target_score=target_score,
+        seed=args.seed,
         n_workers=workers,
         n_eval_processes=eval_processes,
         eval_timeout=eval_timeout,
@@ -500,6 +505,7 @@ def main() -> int:
 
     summary = {
         "method": "specevo",
+        "seed": args.seed,
         "task_dir": str(task_dir),
         "speculator_model": args.speculator_model,
         "navigator_model": args.navigator_model,

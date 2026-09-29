@@ -26,7 +26,6 @@ def _repo_root() -> Path:
 def _load_env() -> None:
     root = _repo_root()
     load_dotenv(root / ".env")
-    load_dotenv(root / ".env")
 
 
 def _resolve_api_key() -> str:
@@ -85,7 +84,7 @@ def main() -> int:
     api_key = _resolve_api_key()
     if not api_key:
         print(
-            "Khong tim thay API key. Dat OPENAI_API_KEY hoac OPENROUTER_API_KEY trong .env.",
+            "No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY in .env.",
             file=sys.stderr,
         )
         return 1
@@ -105,7 +104,7 @@ def main() -> int:
             print(body)
         return 1
     except urllib.error.URLError as exc:
-        print(f"FAIL — khong ket noi duoc: {exc.reason}")
+        print(f"FAIL — could not connect: {exc.reason}")
         return 1
 
     data = auth.get("data") or {}
@@ -125,11 +124,11 @@ def main() -> int:
             print(body)
         if exc.code == 403 and "limit" in body.lower():
             print()
-            print("Key hop le nhung da vuot credit/limit. Tang limit tren OpenRouter hoac doi reset.")
+            print("The key is valid, but its credit limit was reached. Check your OpenRouter account.")
             return 2
         return 1
     except urllib.error.URLError as exc:
-        print(f"FAIL — khong ket noi duoc: {exc.reason}")
+        print(f"FAIL — could not connect: {exc.reason}")
         return 1
 
     reply = chat["choices"][0]["message"]["content"].strip()
@@ -140,7 +139,7 @@ def main() -> int:
           f"completion={usage_info.get('completion_tokens')}")
 
     print()
-    print("OpenRouter API key hoat dong binh thuong.")
+    print("OpenRouter API key check passed.")
     return 0
 
 

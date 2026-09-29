@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    env:
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install core and test dependencies
+        run: python -m pip install -e '.[dev]'
+      - name: Run offline tests
+        run: python -m pytest -q -m 'not integration'
+      - name: Check command-line entry points
+        run: |
+          python scripts/run_specevo.py --help
+          python scripts/run_levi.py --help
+          specevo-baselines-run --help
+      - name: Build release artifacts
+        run: python -m build
+      - name: Verify wheel in a clean environment
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-env"
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-env/bin/python" -I -c 'import specevo; import specevo_baselines; from specevo_baselines.llm.agentic_generator import TOOL_SCHEMAS; assert TOOL_SCHEMAS; assert callable(specevo.run_specevo)'
+          "$RUNNER_TEMP/wheel-env/bin/specevo-baselines-run" --help

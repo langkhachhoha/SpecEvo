@@ -29,11 +29,15 @@ import argparse
 import importlib
 import json
 import os
+import random
 import sys
 from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 def _opt_int(value: str | None) -> int | None:
@@ -105,6 +109,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--dollars", default="", help="Max USD spend (default: unset).")
     p.add_argument("--seconds", default="", help="Wall-clock cap in seconds (default: unset).")
     p.add_argument("--target-score", default="", help="Stop early at this score (default: unset).")
+    p.add_argument("--seed", type=int, default=0, help="Local search random seed (default: 0).")
     p.add_argument("--workers", default="4", help="Concurrent LLM workers (default: 4).")
     p.add_argument(
         "--eval-processes", default="4", help="Concurrent evaluator processes (default: 4)."
@@ -343,6 +348,14 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
+    from dotenv import load_dotenv
+    import numpy as np
+
+    load_dotenv(REPO_ROOT / ".env")
+    if not os.getenv("OPENROUTER_API_KEY") and os.getenv("OPENAI_API_KEY", "").startswith("sk-or-"):
+        os.environ["OPENROUTER_API_KEY"] = os.environ["OPENAI_API_KEY"]
+    random.seed(args.seed)
+    np.random.seed(args.seed % (2**32))
 
     if not os.getenv("OPENROUTER_API_KEY"):
         print("ERROR: OPENROUTER_API_KEY is not set.", file=sys.stderr)
@@ -357,8 +370,6 @@ def main() -> int:
     # inherit sys.path (fork on Linux, explicit transfer on spawn) and
     # therefore be able to unpickle score_fn.
     sys.path.insert(0, str(task_dir))
-    # Also make the vendored LEVI tree importable.
-    sys.path.insert(0, str(REPO_ROOT / "levi"))
 
     problem = importlib.import_module(args.problem_module)
     import specevo  # type: ignore
@@ -386,11 +397,11 @@ def main() -> int:
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    inputs = None
-    if hasattr(problem, "INPUTS"):
-        inputs = problem.INPUTS
-    elif hasattr(problem, "get_lazy_inputs"):
-        inputs = problem.get_lazy_inputs()
+    inputs = getattr(problem, "INPUTS", None)
+    if inputs is None:
+        loader = getattr(problem, "get_lazy_inputs", None) or getattr(problem, "get_inputs", None)
+        if callable(loader):
+            inputs = loader()
 
     print(f"[levi] example       = {task_dir}")
     print(f"[levi] small model   = {args.small_model}")
@@ -412,7 +423,7 @@ def main() -> int:
         init_updates["n_diverse_seeds"] = args.init_diverse_seeds
     if args.init_variants_per_seed is not None:
         init_updates["n_variants_per_seed"] = args.init_variants_per_seed
-    base_init = levi.InitConfig()
+    base_init = specevo.InitConfig()
     effective_init = base_init.model_copy(update=init_updates) if init_updates else base_init
     if init_updates:
         evolve_init = effective_init
@@ -480,30 +491,30 @@ def main() -> int:
         "budget_dollars": dollars,
         "budget_seconds": seconds,
         "target_score": target_score,
-        "pipeline": levi.PipelineConfig(
+        "pipeline": specevo.PipelineConfig(
             n_llm_workers=workers,
             n_eval_processes=eval_processes,
             eval_timeout=eval_timeout,
         ),
         "output_dir": str(output_dir),
-        "sal": levi.SalConfig(**sal_kwargs),
-        "punctuated_equilibrium": levi.PunctuatedEquilibriumConfig(**pe_kwargs),
-        "strategy_log": levi.StrategyLogConfig(**strategy_kwargs),
-        "code_repair": levi.CodeRepairConfig(**repair_kwargs),
-        "adaptive_island": levi.AdaptiveIslandConfig(**island_kwargs),
+        "sal": specevo.SalConfig(**sal_kwargs),
+        "punctuated_equilibrium": specevo.PunctuatedEquilibriumConfig(**pe_kwargs),
+        "strategy_log": specevo.StrategyLogConfig(**strategy_kwargs),
+        "code_repair": specevo.CodeRepairConfig(**repair_kwargs),
+        "adaptive_island": specevo.AdaptiveIslandConfig(**island_kwargs),
     }
     if evolve_init is not None:
         evolve_kw["init"] = evolve_init
     if args.n_centroids is not None:
-        evolve_kw["cvt"] = levi.CVTConfig(n_centroids=args.n_centroids)
+        evolve_kw["cvt"] = specevo.CVTConfig(n_centroids=args.n_centroids)
     if behavior_score_keys is not None:
-        evolve_kw["behavior"] = levi.BehaviorConfig(score_keys=behavior_score_keys)
+        evolve_kw["behavior"] = specevo.BehaviorConfig(score_keys=behavior_score_keys)
 
     if args.prompt_bank:
         # Shared defaults live one level *above* each example dir
         # (tasks/mutation_prompts.json + mutation_temperatures.json)
         # so they're not duplicated per example.
-        shared_dir = REPO_ROOT / "levi" / "examples"
+        shared_dir = REPO_ROOT / "tasks"
         prompts_file = args.prompt_bank_prompts_file
         if prompts_file is None:
             default_prompts = shared_dir / "mutation_prompts.json"
@@ -523,17 +534,18 @@ def main() -> int:
         print(f"[levi] prompt_bank     = enabled")
         print(f"[levi]   prompts_file        = {prompts_file}")
         print(f"[levi]   temperatures_file   = {temperatures_file}")
-        evolve_kw["prompt_bank"] = levi.PromptBankConfig(
+        evolve_kw["prompt_bank"] = specevo.PromptBankConfig(
             enabled=True,
             prompts_file=prompts_file,
             temperatures_file=temperatures_file,
         )
     else:
-        evolve_kw["prompt_bank"] = levi.PromptBankConfig(enabled=False)
+        evolve_kw["prompt_bank"] = specevo.PromptBankConfig(enabled=False)
 
     result = specevo.evolve_code(**evolve_kw)
 
     summary = {
+        "seed": args.seed,
         "task_dir": str(task_dir),
         "best_score": result.best_score,
         "total_evaluations": result.total_evaluations,

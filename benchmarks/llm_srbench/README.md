@@ -136,7 +136,7 @@ API calls.
 
 Use `scripts/reproduce/lsr_synth.sh` — it loops over every problem in a
 domain. Set `DOMAIN=phys_osc` to restrict it to one domain, and see the root
-[README](../../README.md#-reproducing-the-paper) for the other overrides.
+[documentation](../../docs/REPRODUCING.md) for the other overrides.
 
 ```bash
 # SpecEvo across one domain

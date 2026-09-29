@@ -19,7 +19,7 @@ except ModuleNotFoundError as e:
     if e.name == "pandas":
         raise RuntimeError(
             "LLM SQL requires pandas. From the repo root, run:\n"
-            "  uv sync --extra example-llm-sql"
+            "  python -m pip install -e \".[adrs]\""
         ) from e
     raise
 

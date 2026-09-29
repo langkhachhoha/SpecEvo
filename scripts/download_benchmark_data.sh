@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetch every benchmark payload that is not committed to git.
 #
-#   bash scripts/download_benchmark_data.sh            # everything (~110 MB)
+#   bash scripts/download_benchmark_data.sh            # everything
 #   bash scripts/download_benchmark_data.sh llm_sql    # one suite
 #
 # Suites: llm_sql, eplb, lsr_synth
@@ -14,6 +14,10 @@ PY="${PY:-python}"
 [[ -x "$REPO_ROOT/.venv/bin/python" ]] && PY="$REPO_ROOT/.venv/bin/python"
 
 WANT="${1:-all}"
+case "$WANT" in
+    all|llm_sql|eplb|lsr_synth) ;;
+    *) echo "Unknown suite: $WANT. Choose all, llm_sql, eplb, or lsr_synth." >&2; exit 2 ;;
+esac
 want() { [[ "$WANT" == "all" || "$WANT" == "$1" ]]; }
 
 if want llm_sql; then
