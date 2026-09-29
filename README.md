@@ -1,6 +1,6 @@
 # SpecEvo: Speculative Evolution with Large Language Models for Cost-Efficient Scientific Discovery
 
-[Ha Minh Hieu](https://openreview.net/profile?id=~Ha_Minh_Hieu1), [Tongyao Zhu](https://openreview.net/profile?id=~TONGYAO_ZHU1), [Do Xuan Long](https://openreview.net/profile?id=~Do_Xuan_Long1), and [Min-Yen Kan](https://openreview.net/profile?id=~Min-Yen_Kan1)
+Ha Minh Hieu, Tongyao Zhu, Do Xuan Long, and Min-Yen Kan
 
 [![Python](https://img.shields.io/badge/python-3.10–3.13-3776AB?logo=python&logoColor=white)](docs/SETUP.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
