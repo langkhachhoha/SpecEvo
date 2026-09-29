@@ -13,7 +13,7 @@ programs, an **Advisor** turns successes and failures into reusable guidance, an
 a frontier **Navigator** intervenes at sparse checkpoints. Model coordination
 adapts as the search progresses.
 
-![SpecEvo: initialization, parallel Speculators, trajectory-aware Advisor, and adaptive Navigator](assets/figures/main.png)
+[![SpecEvo: initialization, parallel Speculators, trajectory-aware Advisor, and adaptive Navigator](assets/figures/main.png)](assets/figures/main.pdf)
 
 ## Main results
 
