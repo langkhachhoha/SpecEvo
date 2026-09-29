@@ -27,7 +27,7 @@ findings is below; experimental settings and qualifications are in
 | Combinatorial optimization (CO-Bench) | 36 | **3.8% higher mean normalized score** than the strongest baseline; best or tied-best on 20 tasks. |
 | Equation discovery (LSR-Synth) | 129 | Lowest NMSE in all eight domain/split settings among the six main evolutionary baselines at 500 evaluations. |
 
-[![Top: performance versus API cost on mathematical discovery. Bottom: Biology and Chemistry NMSE over 500 evaluations.](assets/figures/fig1.png)](assets/figures/fig1.pdf)
+[![Top: performance versus API cost on mathematical discovery. Bottom: Biology and Chemistry NMSE over 500 evaluations.](assets/figures/fig1-stacked.png)](assets/figures/fig1.pdf)
 
 ## Quickstart
 
