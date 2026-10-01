@@ -1,5 +1,9 @@
 """Tests for prompt optimization edge cases."""
 
+import pytest
+
+pytest.importorskip("dspy", reason="Install the prompt-optimization extra to test DSPy integration")
+
 from specevo.config.models import BudgetConfig, LeviConfig
 from specevo.prompt_opt.optimizer import optimize_prompts
 

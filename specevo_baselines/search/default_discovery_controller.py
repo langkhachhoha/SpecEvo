@@ -81,6 +81,9 @@ class DiscoveryController:
         self.llms = LLMPool(self.config.llm.models)
         self.evaluator_llms = LLMPool(self.config.llm.evaluator_models)
         self.guide_llms = LLMPool(self.config.llm.guide_models)
+        if self.config.random_seed is not None:
+            for pool in (self.llms, self.evaluator_llms, self.guide_llms):
+                pool.random_state.seed(self.config.random_seed)
 
         self._init_context_builder()
 

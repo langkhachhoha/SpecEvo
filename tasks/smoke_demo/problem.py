@@ -18,8 +18,8 @@ Implement ``solve(coins: list[int], target: int) -> int`` that returns the
 minimum number of coins from ``coins`` summing to exactly ``target`` (each
 coin may be used unlimited times), or ``-1`` if impossible.
 
-* All test inputs use small positive integer coins (≤ 25) and targets
-  in [0, 200].
+* All test inputs use positive integer coins up to 419 and targets
+  in [0, 6249].
 * The grader runs your function on a hidden batch of ~20 cases.
 
 ## Scoring

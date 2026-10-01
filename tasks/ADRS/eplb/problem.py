@@ -15,7 +15,7 @@ except ModuleNotFoundError as e:
     if e.name == "torch":
         raise RuntimeError(
             "EPLB requires torch. From the repo root, run:\n"
-            "  uv sync --extra example-eplb"
+            "  python -m pip install -e \".[adrs]\""
         ) from e
     raise
 

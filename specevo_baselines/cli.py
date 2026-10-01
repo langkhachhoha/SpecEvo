@@ -3,7 +3,11 @@
 import argparse
 import asyncio
 import logging
+import json
 import multiprocessing
+import math
+import random
+from contextlib import suppress
 import os
 import sys
 import traceback
@@ -107,7 +111,59 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    parser.add_argument(
+        "--guide-model",
+        default=None,
+        help="Strong model for RelayEvolve and relay routing baselines.",
+    )
+    parser.add_argument(
+        "--seconds",
+        type=_positive_seconds,
+        default=None,
+        help="Graceful wall-clock stop in seconds; in-flight work may finish.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=None,
+        help="Concurrent iterations for native search methods.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Local Python, NumPy and search sampling seed."
+    )
     return parser.parse_args()
+
+
+def _positive_seconds(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("must be a finite number greater than zero")
+    return number
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return number
+
+
+async def _run_with_time_budget(runner, *, iterations, checkpoint_path, seconds):
+    async def stop_after_budget():
+        await asyncio.sleep(seconds)
+        controller = runner.discovery_controller
+        if controller is not None:
+            print(f"Wall-clock budget reached ({seconds:g}s); finishing in-flight work.")
+            controller.request_shutdown()
+
+    timer = asyncio.create_task(stop_after_budget()) if seconds is not None else None
+    try:
+        return await runner.run(iterations=iterations, checkpoint_path=checkpoint_path)
+    finally:
+        if timer is not None:
+            timer.cancel()
+            with suppress(asyncio.CancelledError):
+                await timer
 
 
 def _parse_dollars(value: Optional[str]) -> Optional[float]:
@@ -157,7 +213,17 @@ async def main_async() -> int:
         os.environ["SPECEVO_MAX_COST_USD"] = f"{budget}"
         print(f"Spend budget: ${budget:.4f} (run stops gracefully once reached)")
 
-    has_overrides = any((args.api_base, args.model, args.agentic, args.search))
+    has_overrides = any(
+        (
+            args.api_base,
+            args.model,
+            args.guide_model,
+            args.agentic,
+            args.search,
+            args.workers is not None,
+            args.seed is not None,
+        )
+    )
     config = None
     evaluator_env_vars: Optional[dict[str, str]] = None
 
@@ -178,6 +244,23 @@ async def main_async() -> int:
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
+
+        if args.guide_model is not None:
+            import copy
+
+            guide_config = copy.deepcopy(config)
+            apply_overrides(guide_config, model=args.guide_model, api_base=args.api_base)
+            config.llm.guide_models = guide_config.llm.models
+        if args.workers is not None:
+            config.max_parallel_iterations = args.workers
+        if args.seed is not None:
+            import numpy as np
+
+            random.seed(args.seed)
+            np.random.seed(args.seed % (2**32))
+            config.random_seed = args.seed
+            if hasattr(config.search.database, "random_seed"):
+                config.search.database.random_seed = args.seed
 
         # Resolve benchmark problem if configured and no initial_program provided
         if args.initial_program is None and config.benchmark and config.benchmark.enabled:
@@ -224,6 +307,13 @@ async def main_async() -> int:
 
             # External backends (openevolve, shinkaevolve, gepa)
             if is_external(search_type):
+                if args.seconds is not None or args.workers is not None or args.seed is not None:
+                    print(
+                        "Error: --seconds, --workers and --seed are supported only by native "
+                        "search methods; configure external backends directly.",
+                        file=sys.stderr,
+                    )
+                    return 1
                 if budget is not None:
                     print(
                         f"Warning: --dollars is not enforced by the external '{search_type}' "
@@ -295,6 +385,21 @@ async def main_async() -> int:
             evaluator_env_vars=evaluator_env_vars,
         )
 
+        # Save only non-secret launch settings; model configs can contain API keys.
+        with open(os.path.join(runner.output_dir, "run_settings.json"), "w") as handle:
+            json.dump(
+                {
+                    "seed": args.seed,
+                    "workers": runner.config.max_parallel_iterations,
+                    "iterations": args.iterations,
+                    "dollars": budget,
+                    "seconds": args.seconds,
+                    "search": runner.config.search.type,
+                },
+                handle,
+                indent=2,
+            )
+
         # Load the checkpoint if provided
         if args.checkpoint:
             if not os.path.exists(args.checkpoint):
@@ -303,7 +408,9 @@ async def main_async() -> int:
             print(f"Will resume from checkpoint: {args.checkpoint}")
 
         # Run the discovery
-        best_program = await runner.run(
+        best_program = await _run_with_time_budget(
+            runner,
+            seconds=args.seconds,
             iterations=args.iterations,
             checkpoint_path=args.checkpoint,
         )

@@ -45,5 +45,5 @@ Extra Python dependencies (`torch` for EPLB, `pandas` for LLM-SQL) come from the
 pip install -e ".[adrs]"
 ```
 
-See the root [README](../../README.md#-running-specevo) for the full flag
+See the root [documentation](../../docs/RUNNING.md) for the full flag
 reference and the model defaults.

@@ -1,21 +1,24 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "specevo_baselines"
 dynamic = ["version"]
-description = "A Flexible Framework for AI-Driven Scientific and Algorithmic Discovery"
+description = "Speculative evolution for efficient LLM-driven algorithm discovery"
 readme = "README.md"
 requires-python = ">=3.10, <3.14"
 license = {text = "Apache-2.0"}
 dependencies = [
     "openai>=1.0.0",
+    "litellm>=1.81",
+    "pydantic>=2.0",
     "pyyaml>=6.0",
     "tqdm>=4.64.0",
     "numpy>=1.22.0",
     "scipy>=1.11.0",     # CO-Bench: assignment seed uses scipy.optimize.linear_sum_assignment
     "networkx>=3.2",     # CO-Bench: Maximal independent set graphs are networkx .gpickle
+    "scikit-learn>=1.0.0",  # CVT archive clustering
     "python-dotenv>=1.2.1",
 ]
 
@@ -58,6 +61,9 @@ external = [
     "litellm>=1.81",  # gepa[full] needs litellm, but uv override-dependencies strips the [full] extra
 ]
 dev = [
+    "build>=1.2",
+    "setuptools>=61",
+    "wheel",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "black>=22.0.0",
@@ -121,8 +127,11 @@ markers = [
 ]
 addopts = "--strict-markers"
 
+[tool.setuptools]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*.txt"]
+
 [tool.setuptools.packages.find]
-include = ["specevo_baselines*"]
+include = ["specevo", "specevo.*", "specevo_baselines", "specevo_baselines.*"]
 
 [tool.setuptools.package-data]
 specevo_baselines = [
@@ -131,6 +140,8 @@ specevo_baselines = [
     "search/evox/config/*.txt",
     "extras/external/defaults/*.yaml",
     "extras/monitor/dashboard.html",
+    "llm/tool_schemas/*.json",
+    "evaluation/*.sh",
 ]
 
 [tool.setuptools.dynamic]

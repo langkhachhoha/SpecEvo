@@ -23,7 +23,7 @@ Some task directories carry their own `requirements.txt`:
 
 ```bash
 pip install -r benchmarks/co_bench/tsp/requirements.txt
-python scripts/install_benchmark_requirements.py   # or install them all
+python scripts/install_benchmark_requirements.py benchmarks/co_bench/tsp
 ```
 
 Verify the result — this imports all 176 tasks and makes no API calls:
@@ -50,7 +50,7 @@ python -m specevo_baselines.cli \
   -s gepa_native -i 500 --dollars 10
 ```
 
-See the root [README](../README.md#-baselines) for every method and flag.
+See the root [documentation](../docs/BASELINES.md) for every method and flag.
 
 ## Task layout
 

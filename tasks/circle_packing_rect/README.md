@@ -25,5 +25,5 @@ python scripts/run_specevo.py --task-dir tasks/circle_packing_rect --evals 500 -
 
 Models default to the paper's split — `--speculator-model` (Qwen3-30B),
 `--navigator-model` (GPT-5), `--embedding-model`. API keys are loaded from the
-repository `.env`. See the root [README](../../README.md#-running-specevo) for
+repository `.env`. See the root [documentation](../../docs/RUNNING.md) for
 the full flag reference.

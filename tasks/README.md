@@ -35,7 +35,7 @@ There is no per-task driver; one generic runner serves every task:
 python scripts/run_specevo.py --task-dir tasks/circle_packing --evals 500 --dollars 10
 ```
 
-See the root [README](../README.md#-running-specevo) for the full flag reference.
+See the root [documentation](../docs/RUNNING.md) for the full flag reference.
 
 ## Verifying
 
